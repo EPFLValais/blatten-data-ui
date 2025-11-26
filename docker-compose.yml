@@ -1,0 +1,83 @@
+# Local development: docker compose up
+
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "8888:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  s3proxy:
+    image: oxynozeta/s3-proxy:latest
+    container_name: s3proxy
+    restart: unless-stopped
+    environment:
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /tmp/conf
+        cat > /tmp/conf/config.yml << 'EOF'
+        log:
+          level: info
+          format: json
+        server:
+          port: 8080
+          compress:
+            enabled: true
+        targets:
+          data:
+            mount:
+              path:
+                - /
+            bucket:
+              name: ${S3_BUCKET}
+              prefix: ${S3_PREFIX}
+              region: us-east-1
+              s3Endpoint: ${S3_ENDPOINT}
+              credentials:
+                accessKey:
+                  env: S3_ACCESS_KEY
+                secretKey:
+                  env: S3_SECRET_KEY
+            actions:
+              GET:
+                enabled: true
+              HEAD:
+                enabled: true
+              PUT:
+                enabled: false
+              DELETE:
+                enabled: false
+        EOF
+        exec /proxy/s3-proxy --config /tmp/conf
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.s3proxy.rule=PathPrefix(`/s3`)"
+      - "traefik.http.routers.s3proxy.entrypoints=web"
+      - "traefik.http.middlewares.s3-strip.stripprefix.prefixes=/s3"
+      - "traefik.http.routers.s3proxy.middlewares=s3-strip"
+      - "traefik.http.services.s3proxy.loadbalancer.server.port=8080"
+
+  ui:
+    image: node:22-alpine
+    container_name: blatten-ui
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ui.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.ui.entrypoints=web"
+      - "traefik.http.routers.ui.priority=1"
+      - "traefik.http.services.ui.loadbalancer.server.port=8888"
