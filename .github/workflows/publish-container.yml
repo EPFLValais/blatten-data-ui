@@ -6,8 +6,9 @@ name: CI
 on:
   push:
     branches:
-      - dev
-      - prod
+      - main
+    # Publish semver tags as releases.
+    tags: [ '*.*.*' ]
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -92,9 +93,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      # Deploy to dev when pushing to dev branch
+      # This is used to trigger the correct Gitlab CI pipeline:
+      #   push to main: update dev deployment
+      #   push a tag: update stage, trigger prod merge req.
       - name: Deploy application to dev
-        if: github.ref == 'refs/heads/dev'
+        if: ${{ github.ref }} == "refs/heads/main"
         run: |
           curl -X POST \
           -H "Authorization: Bearer ${{ secrets.CD_TOKEN }}" \
@@ -109,9 +112,24 @@ jobs:
             }
           }'
 
-      # Deploy to prod when pushing to prod branch
-      - name: Deploy application to prod
-        if: github.ref == 'refs/heads/prod'
+      - name: Deploy to stage rules (defined in CD pipeline)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          curl -X POST \
+          -H "Authorization: Bearer ${{ secrets.CD_TOKEN }}" \
+          ${{ secrets.CD_URI }} \
+          -d '{
+            "event_type": "update-manifest",
+            "client_payload": {
+              "digest": "${{ needs.build.outputs.digest }}",
+              "repo_name": "${{ secrets.CD_REPO }}",
+              "repo_org": "${{ secrets.CD_ORG }}",
+              "branch": "stage"
+            }
+          }'
+
+      - name: Deploy to prod rules (defined in CD pipeline)
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           curl -X POST \
           -H "Authorization: Bearer ${{ secrets.CD_TOKEN }}" \
