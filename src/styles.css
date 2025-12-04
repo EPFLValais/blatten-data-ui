@@ -25,7 +25,7 @@ a:hover {
 .site-header {
   background: #fff;
   border-bottom: 1px solid #e0e0e0;
-  padding: 1rem 0;
+  padding: 0.5rem 0;
 }
 
 .header-content {
@@ -33,7 +33,7 @@ a:hover {
   margin: 0 auto;
   padding: 0 2rem;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 1rem;
 }
@@ -44,13 +44,40 @@ a:hover {
   gap: 1.5rem;
 }
 
+.header-logo {
+  display: flex;
+}
+
 .header-logo img {
-  height: 60px;
+  height: 50px;
   width: auto;
 }
 
-.header-right img {
-  height: 32px;
+.header-right {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 50px;
+}
+
+.header-right a {
+  display: flex;
+  line-height: 0;
+}
+
+.header-right a:last-child {
+  position: absolute !important;
+  bottom: 0 !important;
+}
+
+.header-right a:first-child img {
+  height: 25px;
+  width: auto;
+}
+
+.header-right a:last-child img {
+  height: 20px;
   width: auto;
 }
 
