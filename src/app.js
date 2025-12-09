@@ -1,5 +1,6 @@
 const API_BASE = '/s3';
-let currentPath = '/';
+const DATA_ROOT = '/data';
+let currentPath = DATA_ROOT + '/';
 let files = [];
 
 // Toggle downloads section
@@ -43,15 +44,17 @@ function getIcon(item) {
 
 // Update breadcrumb
 function updateBreadcrumb() {
-  const parts = currentPath.split('/').filter(Boolean);
+  // Remove the DATA_ROOT prefix for display purposes
+  const displayPath = currentPath.startsWith(DATA_ROOT) ? currentPath.slice(DATA_ROOT.length) : currentPath;
+  const parts = displayPath.split('/').filter(Boolean);
   const breadcrumb = document.getElementById('fileBreadcrumb');
   if (parts.length === 0) {
     breadcrumb.style.display = 'none';
     return;
   }
   breadcrumb.style.display = 'flex';
-  let html = '<a href="#" data-path="/">&larr; Back</a>';
-  let path = '';
+  let html = '<a href="#" data-path="' + DATA_ROOT + '/">&larr; Back</a>';
+  let path = DATA_ROOT;
   for (const part of parts) {
     path += '/' + part;
     html += ' <span>/</span> <a href="#" data-path="' + path + '/">' + part + '</a>';
@@ -184,4 +187,4 @@ function navigateTo(path) {
 }
 
 // Initial load
-loadPath('/');
+loadPath(DATA_ROOT + '/');

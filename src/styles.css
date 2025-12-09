@@ -46,6 +46,12 @@ a:hover {
 
 .header-logo {
   display: flex;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.header-logo:hover {
+  opacity: 1;
 }
 
 .header-logo img {
@@ -64,6 +70,12 @@ a:hover {
 .header-right a {
   display: flex;
   line-height: 0;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.header-right a:hover {
+  opacity: 1;
 }
 
 .header-right a:last-child {
@@ -177,6 +189,11 @@ a:hover {
 
 .section-content p:last-child {
   margin-bottom: 0;
+}
+
+.section-content .filename {
+  color: #888;
+  font-size: 0.85rem;
 }
 
 /* Collapsible section */
@@ -544,6 +561,14 @@ a:hover {
 
 .attribution-grid .logo-large img {
   height: 50px;
+}
+
+.attribution-grid a.logo-right {
+  margin-left: auto;
+}
+
+.attribution-grid a.logo-right img {
+  height: 28px;
 }
 
 /* Footer */
