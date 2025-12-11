@@ -249,8 +249,30 @@ a:hover {
 .file-browser {
   border: 1px solid #e0e0e0;
   border-radius: 4px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   margin-top: 1rem;
+  height: calc(100vh - 200px);
+}
+
+/* Visible scrollbar for file browser */
+.file-browser::-webkit-scrollbar {
+  width: 12px;
+}
+
+.file-browser::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 0 4px 4px 0;
+}
+
+.file-browser::-webkit-scrollbar-thumb {
+  background: #bbb;
+  border-radius: 6px;
+  border: 2px solid #f0f0f0;
+}
+
+.file-browser::-webkit-scrollbar-thumb:hover {
+  background: #999;
 }
 
 .file-nav {
@@ -261,7 +283,45 @@ a:hover {
   color: #666;
   padding: 0.75rem 1rem;
   background: #fafafa;
+  position: sticky;
+  top: 0;
+  z-index: 10;
   border-bottom: 1px solid #e0e0e0;
+  flex-wrap: wrap;
+}
+
+/* Filter controls */
+.file-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.file-filters input[type="text"] {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  width: 150px;
+}
+
+.file-filters input[type="text"]:focus {
+  outline: none;
+  border-color: #0066cc;
+}
+
+.file-filters select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  background: white;
+}
+
+.file-filters select:focus {
+  outline: none;
+  border-color: #0066cc;
 }
 
 .file-nav a {
@@ -334,15 +394,283 @@ a:hover {
 
 .file-meta {
   display: none;
-  padding: 0.3rem 1rem 0.5rem 3rem;
-  font-size: 0.75rem;
-  color: #888;
-  line-height: 1.4;
-  border-top: 1px dashed #eee;
+  padding: 0.75rem 1rem 0.75rem 2.5rem;
+  font-size: 0.8rem;
+  color: #555;
+  line-height: 1.5;
+  background: #fafafa;
+  border-top: 1px solid #eee;
 }
 
 .file-meta.expanded {
   display: block;
+}
+
+.meta-grid {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.meta-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.5rem;
+}
+
+.meta-label {
+  font-weight: 500;
+  color: #666;
+}
+
+.meta-value {
+  color: #333;
+}
+
+.meta-value.bbox {
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.meta-value.meta-warning {
+  color: #b45309;
+  font-style: italic;
+}
+
+/* Meta content wrapper with mini map */
+.meta-content-wrapper {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.meta-content-wrapper .meta-grid {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Mini map in metadata */
+.meta-mini-map {
+  width: 180px;
+  height: 140px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  flex-shrink: 0;
+  background: #f0f0f0;
+  position: relative;
+}
+
+.mini-map-container {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mini-map-osm-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #0066cc;
+  text-decoration: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  z-index: 1000;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mini-map-osm-btn:hover {
+  background: #0066cc;
+  color: white;
+  text-decoration: none;
+}
+
+/* File count badge */
+.file-count-badge {
+  display: inline-block;
+  background: #e0e7ef;
+  color: #555;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 10px;
+  margin-left: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* Assets section */
+.meta-assets {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.meta-assets-header {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.assets-summary {
+  font-size: 0.8rem;
+  color: #666;
+  margin-bottom: 0.75rem;
+}
+
+.assets-group {
+  margin-bottom: 0.75rem;
+}
+
+.assets-group-header {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #444;
+  margin-bottom: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.assets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-left: 1.5rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.asset-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  padding: 0.2rem 0;
+}
+
+.asset-link {
+  color: #0066cc;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.asset-link:hover {
+  text-decoration: underline;
+}
+
+.asset-size {
+  color: #888;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.assets-more {
+  font-size: 0.8rem;
+  color: #0066cc;
+  cursor: pointer;
+  padding: 0.35rem 0;
+  margin-top: 0.25rem;
+}
+
+.assets-more:hover {
+  text-decoration: underline;
+}
+
+/* Collection styles */
+.collection-item {
+  cursor: pointer;
+}
+
+.collection-item:hover {
+  background: #f0f7ff;
+}
+
+.collection-description {
+  padding: 0.25rem 0 0 2.5rem;
+  font-size: 0.8rem;
+  color: #666;
+  line-height: 1.4;
+}
+
+.collection-date {
+  font-size: 0.75rem;
+  color: #888;
+}
+
+/* Download button in row */
+.download-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 4px;
+  text-decoration: none;
+  color: #0066cc;
+  font-size: 1rem;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+  transition: background 0.15s, color 0.15s;
+}
+
+.download-btn:hover {
+  background: #0066cc;
+  color: white;
+}
+
+/* Make file rows clickable */
+.file-item.file {
+  cursor: pointer;
+}
+
+.file-item.file:hover {
+  background: #f8f9fa;
+}
+
+.file-item.file .file-row {
+  align-items: center;
+}
+
+/* Meta actions section */
+.meta-actions {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #eee;
+}
+
+.meta-download-btn {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: #0066cc;
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.meta-download-btn:hover {
+  background: #0055aa;
+}
+
+/* Mini map Leaflet container styling */
+.meta-mini-map .leaflet-container {
+  border-radius: 6px;
 }
 
 .file-name .icon {
@@ -610,4 +938,98 @@ a:hover {
     display: block;
     padding-bottom: 0.75rem;
   }
+
+  .meta-content-wrapper {
+    flex-direction: column;
+  }
+
+  .meta-mini-map {
+    width: 100%;
+    height: 150px;
+    margin-top: 0.75rem;
+  }
+}
+
+/* Footer */
+.site-footer {
+  text-align: right;
+  padding: 0 0 1rem;
+  margin-top: -0.5rem;
+  font-size: 0.7rem;
+  color: #999;
+  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  transition: opacity 0.2s;
+}
+
+.site-footer a {
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+}
+
+.site-footer a:hover {
+  text-decoration: underline;
+}
+
+.site-footer:hover {
+  opacity: 0.7;
+}
+
+.footer-separator {
+  margin: 0 0.2rem;
+}
+
+/* Show more items button */
+.show-more-items {
+  padding: 1rem;
+  text-align: center;
+  border-top: 1px solid #e0e0e0;
+}
+
+.show-more-btn {
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 0.6rem 1.5rem;
+  font-size: 0.9rem;
+  color: #333;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.show-more-btn:hover {
+  background: #e0e0e0;
+  border-color: #999;
+}
+
+/* Assets lazy loading */
+.assets-placeholder,
+.loading-assets {
+  padding: 1rem;
+  color: #888;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.loading-assets {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.loading-assets .spinner {
+  width: 16px;
+  height: 16px;
+}
+
+.load-more-assets {
+  padding: 0.75rem;
+  text-align: center;
+  border-top: 1px solid #e0e0e0;
+  margin-top: 0.5rem;
 }
