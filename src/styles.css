@@ -111,6 +111,18 @@ a:hover {
   padding: 2rem;
 }
 
+/* Prototype banner */
+.prototype-banner {
+  background: #fef08a;
+  color: #713f12;
+  padding: 1rem 1.5rem;
+  border-radius: 4px;
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+  text-align: center;
+  border: 2px solid #eab308;
+}
+
 /* Breadcrumb */
 .breadcrumb {
   font-size: 0.875rem;
@@ -573,10 +585,35 @@ a:hover {
 
 /* Footer */
 .site-footer {
-  text-align: center;
-  padding: 2rem;
-  color: #888;
-  font-size: 0.85rem;
+  text-align: right;
+  padding: 0 0 1rem;
+  margin-top: -0.5rem;
+  font-size: 0.7rem;
+  color: #999;
+  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  transition: opacity 0.2s;
+}
+
+.site-footer a {
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+}
+
+.site-footer a:hover {
+  text-decoration: underline;
+}
+
+.site-footer:hover {
+  opacity: 0.7;
+}
+
+.footer-separator {
+  margin: 0 0.2rem;
 }
 
 /* Responsive */
