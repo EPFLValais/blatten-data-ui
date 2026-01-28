@@ -7,8 +7,19 @@ let items = [];
 let totalItemCount = 0;
 let allSensors = [];
 let sensorsByCollection = {}; // Maps collection ID to list of sensors in that collection
-let currentFilters = { search: '', sensor: '' };
+let allSources = [];
+let sourcesByCollection = {}; // Maps collection ID to list of sources in that collection
+let currentFilters = {
+  search: '',           // client-side text filter
+  sensor: '',           // existing
+  source: '',           // maps to ?source=
+  processingLevel: '',  // maps to ?processing_level=
+  dateFrom: '',         // combined into ?datetime=
+  dateTo: '',
+  bbox: null            // [minLon, minLat, maxLon, maxLat] or null
+};
 let filterDebounceTimer = null;
+let serverFilterDebounceTimer = null;
 
 // Toggle downloads section
 function toggleDownloads() {
@@ -77,22 +88,71 @@ function updateBreadcrumb() {
   const breadcrumb = document.getElementById('fileBreadcrumb');
   breadcrumb.style.display = 'flex';
 
-  // Build sensor options
+  // Build dropdown options
   const sensorOptions = allSensors.map(s =>
     `<option value="${s}" ${currentFilters.sensor === s ? 'selected' : ''}>${s}</option>`
   ).join('');
 
-  if (!currentCollection) {
-    // Show just filters on collections view
-    breadcrumb.innerHTML = `
-      <span>All Collections</span>
-      <div class="file-filters">
+  const sourceOptions = allSources.map(s =>
+    `<option value="${s}" ${currentFilters.source === s ? 'selected' : ''}>${s}</option>`
+  ).join('');
+
+  const processingLevelOptions = ['1', '2', '3', '4'].map(level =>
+    `<option value="${level}" ${currentFilters.processingLevel === level ? 'selected' : ''}>Level ${level}</option>`
+  ).join('');
+
+  // Check if any advanced filters are active
+  const hasAdvancedFilters = currentFilters.source || currentFilters.processingLevel ||
+    currentFilters.dateFrom || currentFilters.dateTo || currentFilters.bbox;
+
+  const filtersHtml = `
+    <div class="filter-container">
+      <div class="filter-row">
         <input type="text" id="searchFilter" placeholder="Search..." value="${currentFilters.search}">
         <select id="sensorFilter">
           <option value="">All Sensors</option>
           ${sensorOptions}
         </select>
+        <select id="sourceFilter">
+          <option value="">All Sources</option>
+          ${sourceOptions}
+        </select>
+        <select id="processingLevelFilter">
+          <option value="">All Levels</option>
+          ${processingLevelOptions}
+        </select>
+        <button id="toggleAdvancedFilters" class="filter-toggle-btn ${hasAdvancedFilters ? 'active' : ''}" title="Date & Location Filters">
+          <span class="filter-icon">⚙</span>
+        </button>
+        ${hasAdvancedFilters ? '<button id="clearFilters" class="filter-clear-btn" title="Clear all filters">✕</button>' : ''}
       </div>
+      <div class="filter-row-advanced" id="advancedFilters" style="display: ${hasAdvancedFilters ? 'flex' : 'none'};">
+        <div class="filter-group">
+          <label for="dateFromFilter">From</label>
+          <input type="datetime-local" id="dateFromFilter" value="${currentFilters.dateFrom}">
+        </div>
+        <div class="filter-group">
+          <label for="dateToFilter">To</label>
+          <input type="datetime-local" id="dateToFilter" value="${currentFilters.dateTo}">
+        </div>
+        <div class="filter-group filter-group-bbox">
+          <label>Bbox</label>
+          <div class="bbox-inputs">
+            <input type="number" id="bboxMinLon" placeholder="Min Lon" step="any" value="${currentFilters.bbox?.[0] ?? ''}">
+            <input type="number" id="bboxMinLat" placeholder="Min Lat" step="any" value="${currentFilters.bbox?.[1] ?? ''}">
+            <input type="number" id="bboxMaxLon" placeholder="Max Lon" step="any" value="${currentFilters.bbox?.[2] ?? ''}">
+            <input type="number" id="bboxMaxLat" placeholder="Max Lat" step="any" value="${currentFilters.bbox?.[3] ?? ''}">
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (!currentCollection) {
+    // Show just filters on collections view
+    breadcrumb.innerHTML = `
+      <span>All Collections</span>
+      <div class="file-filters">${filtersHtml}</div>
     `;
   } else {
     const collection = collections.find(c => c.id === currentCollection);
@@ -102,33 +162,112 @@ function updateBreadcrumb() {
       <a href="#" id="backToCollections">&larr; All Collections</a>
       <span>/</span>
       <span>${title}</span>
-      <div class="file-filters">
-        <input type="text" id="searchFilter" placeholder="Search..." value="${currentFilters.search}">
-        <select id="sensorFilter">
-          <option value="">All Sensors</option>
-          ${sensorOptions}
-        </select>
-      </div>
+      <div class="file-filters">${filtersHtml}</div>
     `;
 
     document.getElementById('backToCollections').addEventListener('click', (e) => {
       e.preventDefault();
       currentCollection = null;
-      currentFilters = { search: '', sensor: '' };
-      renderCollections();
+      currentFilters = {
+        search: '', sensor: '', source: '', processingLevel: '',
+        dateFrom: '', dateTo: '', bbox: null
+      };
+      loadCollections();
     });
   }
 
   // Attach filter event listeners
+  // Text search - client-side only, debounced
   document.getElementById('searchFilter').addEventListener('input', (e) => {
     currentFilters.search = e.target.value;
-    applyFilters(); // Debounced
+    applyFilters(); // Debounced client-side filter
   });
 
+  // Sensor - server-side, immediate
   document.getElementById('sensorFilter').addEventListener('change', (e) => {
     currentFilters.sensor = e.target.value;
-    applyFilters(true); // Immediate for dropdown
+    applyFilters(true); // Immediate client-side filter
   });
+
+  // Source - server-side, immediate
+  document.getElementById('sourceFilter').addEventListener('change', (e) => {
+    currentFilters.source = e.target.value;
+    applyServerFiltersDebounced(true);
+  });
+
+  // Processing Level - server-side, immediate
+  document.getElementById('processingLevelFilter').addEventListener('change', (e) => {
+    currentFilters.processingLevel = e.target.value;
+    applyServerFiltersDebounced(true);
+  });
+
+  // Toggle advanced filters
+  document.getElementById('toggleAdvancedFilters').addEventListener('click', () => {
+    const advanced = document.getElementById('advancedFilters');
+    const btn = document.getElementById('toggleAdvancedFilters');
+    if (advanced.style.display === 'none') {
+      advanced.style.display = 'flex';
+      btn.classList.add('active');
+    } else {
+      advanced.style.display = 'none';
+      btn.classList.remove('active');
+    }
+  });
+
+  // Clear filters button
+  const clearBtn = document.getElementById('clearFilters');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      currentFilters = {
+        search: '', sensor: '', source: '', processingLevel: '',
+        dateFrom: '', dateTo: '', bbox: null
+      };
+      applyServerFiltersDebounced(true);
+    });
+  }
+
+  // Date filters - server-side, debounced
+  document.getElementById('dateFromFilter').addEventListener('change', (e) => {
+    currentFilters.dateFrom = e.target.value;
+    applyServerFiltersDebounced();
+  });
+
+  document.getElementById('dateToFilter').addEventListener('change', (e) => {
+    currentFilters.dateTo = e.target.value;
+    applyServerFiltersDebounced();
+  });
+
+  // Bbox inputs - server-side, debounced
+  const bboxInputs = ['bboxMinLon', 'bboxMinLat', 'bboxMaxLon', 'bboxMaxLat'];
+  bboxInputs.forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      const minLon = parseFloat(document.getElementById('bboxMinLon').value);
+      const minLat = parseFloat(document.getElementById('bboxMinLat').value);
+      const maxLon = parseFloat(document.getElementById('bboxMaxLon').value);
+      const maxLat = parseFloat(document.getElementById('bboxMaxLat').value);
+
+      if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
+        currentFilters.bbox = [minLon, minLat, maxLon, maxLat];
+      } else if (isNaN(minLon) && isNaN(minLat) && isNaN(maxLon) && isNaN(maxLat)) {
+        currentFilters.bbox = null;
+      }
+      applyServerFiltersDebounced();
+    });
+  });
+}
+
+// Apply server-side filters with debounce
+function applyServerFiltersDebounced(immediate = false) {
+  const doFilter = async () => {
+    await applyServerFilters();
+  };
+
+  if (immediate) {
+    doFilter();
+  } else {
+    clearTimeout(serverFilterDebounceTimer);
+    serverFilterDebounceTimer = setTimeout(doFilter, 300);
+  }
 }
 
 // Apply filters to current view (with debounce for search)
@@ -166,6 +305,36 @@ function applyFilters(immediate = false) {
   }
 }
 
+// Build query parameters for server-side filtering
+function buildFilterParams() {
+  const params = new URLSearchParams();
+  params.set('exclude_assets', 'true');
+
+  if (currentFilters.source) params.set('source', currentFilters.source);
+  if (currentFilters.processingLevel) params.set('processing_level', currentFilters.processingLevel);
+
+  if (currentFilters.dateFrom || currentFilters.dateTo) {
+    const from = currentFilters.dateFrom ? new Date(currentFilters.dateFrom).toISOString() : '..';
+    const to = currentFilters.dateTo ? new Date(currentFilters.dateTo).toISOString() : '..';
+    params.set('datetime', `${from}/${to}`);
+  }
+
+  if (currentFilters.bbox?.length === 4) {
+    params.set('bbox', currentFilters.bbox.join(','));
+  }
+
+  return params;
+}
+
+// Apply server-side filters (re-fetches data)
+async function applyServerFilters() {
+  if (currentCollection) {
+    await loadCollection(currentCollection);
+  } else {
+    await loadCollections();
+  }
+}
+
 // Render collections list
 function renderCollections() {
   currentCollection = null;
@@ -173,12 +342,18 @@ function renderCollections() {
 
   const container = document.getElementById('fileList');
 
-  // Filter collections based on sensor filter
+  // Filter collections based on sensor and source filters
   let filteredCollections = collections;
   if (currentFilters.sensor) {
-    filteredCollections = collections.filter(c => {
+    filteredCollections = filteredCollections.filter(c => {
       const collectionSensors = sensorsByCollection[c.id] || [];
       return collectionSensors.includes(currentFilters.sensor);
+    });
+  }
+  if (currentFilters.source) {
+    filteredCollections = filteredCollections.filter(c => {
+      const collectionSources = sourcesByCollection[c.id] || [];
+      return collectionSources.includes(currentFilters.source);
     });
   }
 
@@ -239,9 +414,9 @@ async function loadCollection(collectionId, loadAll = false) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading items...</div>';
 
   try {
-    const limit = loadAll ? 10000 : INITIAL_ITEMS_LIMIT;
-    // Use exclude_assets=true for lightweight listing (keeps only archive asset)
-    const response = await fetch(`${STAC_API}/collections/${collectionId}/items?limit=${limit}&exclude_assets=true`);
+    const params = buildFilterParams();
+    params.set('limit', loadAll ? '10000' : String(INITIAL_ITEMS_LIMIT));
+    const response = await fetch(`${STAC_API}/collections/${collectionId}/items?${params}`);
     if (!response.ok) throw new Error('Failed to load items');
 
     const data = await response.json();
@@ -327,12 +502,14 @@ function renderItems() {
     const props = item.properties || {};
     const searchLower = currentFilters.search.toLowerCase();
 
-    // Search filter - check title, description, sensor
+    // Search filter - check title, description, sensor, source
     if (searchLower) {
       const title = (props.title || item.id || '').toLowerCase();
       const description = (props.description || '').toLowerCase();
       const sensor = (props['blatten:sensor'] || '').toLowerCase();
-      if (!title.includes(searchLower) && !description.includes(searchLower) && !sensor.includes(searchLower)) {
+      const source = (props['blatten:source'] || '').toLowerCase();
+      if (!title.includes(searchLower) && !description.includes(searchLower) &&
+          !sensor.includes(searchLower) && !source.includes(searchLower)) {
         return false;
       }
     }
@@ -419,7 +596,7 @@ function renderItems() {
               ${frequency ? `<div class="meta-row"><span class="meta-label">Frequency</span><span class="meta-value">${frequency}</span></div>` : ''}
               ${continued !== undefined ? `<div class="meta-row"><span class="meta-label">Status</span><span class="meta-value">${continued ? 'Ongoing' : 'Completed'}</span></div>` : ''}
               ${format ? `<div class="meta-row"><span class="meta-label">Format</span><span class="meta-value">${format}</span></div>` : ''}
-              ${item.bbox ? `<div class="meta-row"><span class="meta-label">Bounding Box</span><span class="meta-value bbox">[${item.bbox.map(n => n?.toFixed(4)).join(', ')}]</span></div>` : '<div class="meta-row"><span class="meta-label">Geometry</span><span class="meta-value meta-warning">⚠️ Coordinates not yet available</span></div>'}
+              ${item.bbox ? `<div class="meta-row"><span class="meta-label">Bounding Box</span><span class="meta-value bbox">[${item.bbox.map(n => n?.toFixed(4)).join(', ')}]</span></div>` : ''}
             </div>
             ${item.bbox ? `<div class="meta-mini-map" id="minimap-${metaId}" data-bbox="${item.bbox.join(',')}" data-geometry='${JSON.stringify(item.geometry)}'></div>` : ''}
           </div>
@@ -449,8 +626,10 @@ function renderItems() {
 
       try {
         // Fetch remaining items starting from current offset
-        const offset = items.length;
-        const response = await fetch(`${STAC_API}/collections/${currentCollection}/items?limit=10000&offset=${offset}&exclude_assets=true`);
+        const params = buildFilterParams();
+        params.set('limit', '10000');
+        params.set('offset', String(items.length));
+        const response = await fetch(`${STAC_API}/collections/${currentCollection}/items?${params}`);
         if (!response.ok) throw new Error('Failed to load items');
 
         const data = await response.json();
@@ -629,10 +808,12 @@ async function loadCollections() {
   document.getElementById('error').style.display = 'none';
 
   try {
-    // Fetch collections and all items (for sensor list) in parallel
+    // Fetch collections and all items (for sensor/source lists) in parallel
+    const params = buildFilterParams();
+    params.set('limit', '1000');
     const [collectionsRes, itemsRes] = await Promise.all([
       fetch(`${STAC_API}/collections`),
-      fetch(`${STAC_API}/search?limit=1000&exclude_assets=true`)
+      fetch(`${STAC_API}/search?${params}`)
     ]);
 
     if (!collectionsRes.ok) throw new Error('Failed to load STAC collections');
@@ -640,15 +821,19 @@ async function loadCollections() {
     const collectionsData = await collectionsRes.json();
     collections = collectionsData.collections || [];
 
-    // Extract unique sensors from all items and map to collections
+    // Extract unique sensors and sources from all items and map to collections
     if (itemsRes.ok) {
       const itemsData = await itemsRes.json();
       const sensors = new Set();
+      const sources = new Set();
       sensorsByCollection = {}; // Reset mapping
+      sourcesByCollection = {}; // Reset mapping
 
       (itemsData.features || []).forEach(item => {
         const sensor = item.properties?.['blatten:sensor'];
+        const source = item.properties?.['blatten:source'];
         const collectionId = item.collection;
+
         if (sensor) {
           sensors.add(sensor);
           // Track which sensors belong to which collections
@@ -661,8 +846,22 @@ async function loadCollections() {
             }
           }
         }
+
+        if (source) {
+          sources.add(source);
+          // Track which sources belong to which collections
+          if (collectionId) {
+            if (!sourcesByCollection[collectionId]) {
+              sourcesByCollection[collectionId] = [];
+            }
+            if (!sourcesByCollection[collectionId].includes(source)) {
+              sourcesByCollection[collectionId].push(source);
+            }
+          }
+        }
       });
       allSensors = [...sensors].sort();
+      allSources = [...sources].sort();
     }
 
     // Sort collections by title

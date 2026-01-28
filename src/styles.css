@@ -293,9 +293,11 @@ a:hover {
 /* Filter controls */
 .file-filters {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   margin-left: auto;
+  flex: 1;
+  min-width: 0;
 }
 
 .file-filters input[type="text"] {
@@ -322,6 +324,131 @@ a:hover {
 .file-filters select:focus {
   outline: none;
   border-color: #0066cc;
+}
+
+/* Filter container */
+.filter-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.filter-row-advanced {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-top: 0.5rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.filter-group label {
+  font-size: 0.75rem;
+  color: #666;
+  white-space: nowrap;
+}
+
+.filter-group input[type="datetime-local"] {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  background: white;
+}
+
+.filter-group input[type="datetime-local"]:focus {
+  outline: none;
+  border-color: #0066cc;
+}
+
+.filter-group-bbox {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.bbox-inputs {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.bbox-inputs input[type="number"] {
+  width: 70px;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.bbox-inputs input[type="number"]:focus {
+  outline: none;
+  border-color: #0066cc;
+}
+
+.bbox-inputs input[type="number"]::placeholder {
+  font-size: 0.65rem;
+  color: #999;
+}
+
+.filter-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #666;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.filter-toggle-btn:hover {
+  background: #f0f0f0;
+  border-color: #999;
+}
+
+.filter-toggle-btn.active {
+  background: #0066cc;
+  border-color: #0066cc;
+  color: white;
+}
+
+.filter-clear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #dc2626;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #dc2626;
+  transition: background 0.15s, color 0.15s;
+}
+
+.filter-clear-btn:hover {
+  background: #dc2626;
+  color: white;
 }
 
 .file-nav a {
@@ -947,6 +1074,46 @@ a:hover {
     width: 100%;
     height: 150px;
     margin-top: 0.75rem;
+  }
+
+  /* Filter responsive */
+  .file-nav {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .file-filters {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .filter-row {
+    flex-wrap: wrap;
+  }
+
+  .filter-row input[type="text"],
+  .filter-row select {
+    flex: 1;
+    min-width: 100px;
+  }
+
+  .filter-row-advanced {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-group {
+    flex-wrap: wrap;
+  }
+
+  .bbox-inputs {
+    flex-wrap: wrap;
+  }
+
+  .bbox-inputs input[type="number"] {
+    flex: 1;
+    min-width: 60px;
   }
 }
 

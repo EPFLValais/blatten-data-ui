@@ -91,6 +91,8 @@ services:
       - STAC_CATALOG_DIR=/app/stac
       - PORT=3000
       - RUST_LOG=info,tower_http=debug
+    volumes:
+      - ../blatten-data-api/stac:/app/stac:ro
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.stac.rule=PathPrefix(`/stac`)"
