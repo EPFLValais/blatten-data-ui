@@ -88,6 +88,7 @@ services:
     restart: unless-stopped
     environment:
       - STAC_BASE_URL=${STAC_BASE_URL:-http://localhost:8888}
+      - S3_BASE_URL=${S3_BASE_URL:-/s3}
       - STAC_CATALOG_DIR=/app/stac
       - PORT=3000
       - RUST_LOG=info,tower_http=debug

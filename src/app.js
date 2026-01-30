@@ -9,6 +9,7 @@ let allSensors = [];
 let sensorsByCollection = {}; // Maps collection ID to list of sensors in that collection
 let allSources = [];
 let sourcesByCollection = {}; // Maps collection ID to list of sources in that collection
+let processingLevelsByCollection = {}; // Maps collection ID to list of processing levels
 let currentFilters = {
   search: '',           // client-side text filter
   sensor: '',           // existing
@@ -20,6 +21,142 @@ let currentFilters = {
 };
 let filterDebounceTimer = null;
 let serverFilterDebounceTimer = null;
+let currentExpandedItem = null; // Track currently expanded item for history
+
+// History API integration for back button navigation
+function pushHistoryState(collectionId = null, expandedItem = null) {
+  const state = { collection: collectionId, expandedItem: expandedItem };
+  let url = '#';
+  if (collectionId) {
+    url = `#collection=${collectionId}`;
+    if (expandedItem) {
+      url += `&item=${expandedItem}`;
+    }
+  }
+  history.pushState(state, '', url);
+}
+
+function replaceHistoryState(collectionId = null, expandedItem = null) {
+  const state = { collection: collectionId, expandedItem: expandedItem };
+  let url = '#';
+  if (collectionId) {
+    url = `#collection=${collectionId}`;
+    if (expandedItem) {
+      url += `&item=${expandedItem}`;
+    }
+  }
+  history.replaceState(state, '', url);
+}
+
+// Collapse an item by ID (used by popstate handler)
+function collapseItem(itemId) {
+  const row = document.querySelector(`.file-item.file[data-item-id="${itemId}"]`);
+  if (row) {
+    const targetId = row.dataset.metaTarget;
+    const toggle = row.querySelector('.file-meta-toggle');
+    const metaEl = document.getElementById(targetId);
+    if (metaEl && metaEl.classList.contains('expanded')) {
+      toggle?.classList.remove('expanded');
+      metaEl.classList.remove('expanded');
+    }
+  }
+  if (currentExpandedItem === itemId) {
+    currentExpandedItem = null;
+  }
+}
+
+// Expand an item by ID (used by popstate handler)
+function expandItemById(itemId) {
+  const row = document.querySelector(`.file-item.file[data-item-id="${itemId}"]`);
+  if (row) {
+    const targetId = row.dataset.metaTarget;
+    const toggle = row.querySelector('.file-meta-toggle');
+    const metaEl = document.getElementById(targetId);
+    if (metaEl && !metaEl.classList.contains('expanded')) {
+      toggle?.classList.add('expanded');
+      metaEl.classList.add('expanded');
+      currentExpandedItem = itemId;
+    }
+  }
+}
+
+// Handle browser back/forward buttons
+window.addEventListener('popstate', (event) => {
+  const collectionId = event.state?.collection || null;
+  const expandedItem = event.state?.expandedItem || null;
+
+  // Same collection - handle item expansion/collapse
+  if (collectionId === currentCollection && collectionId !== null) {
+    if (currentExpandedItem && !expandedItem) {
+      // Back from expanded item to collection view
+      collapseItem(currentExpandedItem);
+    } else if (expandedItem && expandedItem !== currentExpandedItem) {
+      // Forward to a different expanded item
+      if (currentExpandedItem) {
+        collapseItem(currentExpandedItem);
+      }
+      expandItemById(expandedItem);
+    }
+    return;
+  }
+
+  // Different collection or going to collections list
+  if (collectionId && collectionId !== currentCollection) {
+    // Navigate to collection without pushing new history
+    loadCollection(collectionId, false, false);
+  } else if (!collectionId && currentCollection) {
+    // Go back to collections list without pushing new history
+    currentCollection = null;
+    currentExpandedItem = null;
+    currentFilters = {
+      search: '', sensor: '', source: '', processingLevel: '',
+      dateFrom: '', dateTo: '', bbox: null
+    };
+    loadCollections(false);
+  }
+});
+
+// Parse initial URL hash on page load
+function parseHash() {
+  const hash = window.location.hash;
+  const result = { collection: null, item: null };
+
+  const collectionMatch = hash.match(/collection=([^&]+)/);
+  if (collectionMatch) {
+    result.collection = decodeURIComponent(collectionMatch[1]);
+  }
+
+  const itemMatch = hash.match(/item=([^&]+)/);
+  if (itemMatch) {
+    result.item = decodeURIComponent(itemMatch[1]);
+  }
+
+  return result;
+}
+
+// Initialize with proper history state
+async function initializeApp() {
+  const { collection: initialCollection, item: initialItem } = parseHash();
+
+  // Set initial history state (replace, don't push)
+  replaceHistoryState(initialCollection, initialItem);
+
+  if (initialCollection) {
+    // Load collections first (to populate filters), then load the specific collection
+    await loadCollections(false);
+    await loadCollection(initialCollection, false, false);
+
+    // If there's an initial item to expand, expand it after a short delay for DOM to be ready
+    if (initialItem) {
+      setTimeout(() => {
+        expandItemById(initialItem);
+        currentExpandedItem = initialItem;
+      }, 100);
+    }
+  } else {
+    await loadCollections(false);
+  }
+}
 
 // Toggle downloads section
 function toggleDownloads() {
@@ -66,22 +203,6 @@ function getIcon(format) {
   return icons[format?.toUpperCase()] || '📄';
 }
 
-// Get collection icon
-function getCollectionIcon(collectionId) {
-  const icons = {
-    'webcam-image': '📷',
-    'deformation-analysis': '📈',
-    'orthophoto': '🗺️',
-    'radar-velocity': '📡',
-    'dsm': '⛰️',
-    'point-cloud': '☁️',
-    '3d-model': '🎨',
-    'gnss-data': '📍',
-    'thermal-image': '🌡️',
-    'hydrology': '💧',
-  };
-  return icons[collectionId] || '📁';
-}
 
 // Update breadcrumb and filters
 function updateBreadcrumb() {
@@ -101,9 +222,8 @@ function updateBreadcrumb() {
     `<option value="${level}" ${currentFilters.processingLevel === level ? 'selected' : ''}>Level ${level}</option>`
   ).join('');
 
-  // Check if any advanced filters are active
-  const hasAdvancedFilters = currentFilters.source || currentFilters.processingLevel ||
-    currentFilters.dateFrom || currentFilters.dateTo || currentFilters.bbox;
+  // Check if any advanced filters (date/bbox) are active
+  const hasAdvancedFilters = currentFilters.dateFrom || currentFilters.dateTo || currentFilters.bbox;
 
   const filtersHtml = `
     <div class="filter-container">
@@ -167,12 +287,15 @@ function updateBreadcrumb() {
 
     document.getElementById('backToCollections').addEventListener('click', (e) => {
       e.preventDefault();
+      // Push history state before changing currentCollection
+      pushHistoryState(null, null);
       currentCollection = null;
+      currentExpandedItem = null;
       currentFilters = {
         search: '', sensor: '', source: '', processingLevel: '',
         dateFrom: '', dateTo: '', bbox: null
       };
-      loadCollections();
+      loadCollections(false); // Don't push history again
     });
   }
 
@@ -342,7 +465,7 @@ function renderCollections() {
 
   const container = document.getElementById('fileList');
 
-  // Filter collections based on sensor and source filters
+  // Filter collections based on sensor, source, and processing level filters
   let filteredCollections = collections;
   if (currentFilters.sensor) {
     filteredCollections = filteredCollections.filter(c => {
@@ -354,6 +477,12 @@ function renderCollections() {
     filteredCollections = filteredCollections.filter(c => {
       const collectionSources = sourcesByCollection[c.id] || [];
       return collectionSources.includes(currentFilters.source);
+    });
+  }
+  if (currentFilters.processingLevel) {
+    filteredCollections = filteredCollections.filter(c => {
+      const collectionLevels = processingLevelsByCollection[c.id] || [];
+      return collectionLevels.includes(currentFilters.processingLevel);
     });
   }
 
@@ -375,7 +504,6 @@ function renderCollections() {
   }
 
   container.innerHTML = filteredCollections.map(collection => {
-    const icon = getCollectionIcon(collection.id);
     const itemCount = collection._itemCount || '';
     const temporal = collection.extent?.temporal?.interval?.[0];
     const dateRange = temporal ? formatDateRange(temporal[0], temporal[1]) : '';
@@ -383,9 +511,7 @@ function renderCollections() {
     return `
       <div class="file-item folder collection-item" data-collection="${collection.id}">
         <div class="file-row">
-          <span style="width:0.8rem"></span>
           <div class="file-name">
-            <span class="icon">${icon}</span>
             <span class="name">${collection.title || collection.id}</span>
           </div>
           <div class="file-info">
@@ -406,8 +532,12 @@ function renderCollections() {
 }
 
 // Load items for a collection
-async function loadCollection(collectionId, loadAll = false) {
+async function loadCollection(collectionId, loadAll = false, pushHistory = true) {
   currentCollection = collectionId;
+  currentExpandedItem = null; // Reset expanded item when changing collections
+  if (pushHistory) {
+    pushHistoryState(collectionId, null);
+  }
   updateBreadcrumb();
 
   const container = document.getElementById('fileList');
@@ -445,45 +575,90 @@ function getExtension(href, title) {
   return match ? match[1].toUpperCase() : '';
 }
 
-// Render assets list for an item
-function renderAssetsList(assets) {
-  // Separate archive from other assets
-  const archive = assets.archive;
-  const fileAssets = Object.entries(assets).filter(([key]) => key !== 'archive');
+// Render assets list as collapsible file groups
+// Takes item.assets object (new STAC structure where files are assets, not child items)
+function renderItemAssets(assets) {
+  if (!assets) {
+    return '<div class="empty">No files found</div>';
+  }
+
+  // Separate archive from file assets
+  const fileAssets = Object.entries(assets)
+    .filter(([key]) => key !== 'archive')
+    .map(([key, asset]) => ({ key, ...asset }));
+
+  if (fileAssets.length === 0) {
+    return '<div class="empty">No individual files found</div>';
+  }
 
   // Group by extension
   const byExtension = {};
-  fileAssets.forEach(([key, asset]) => {
+  fileAssets.forEach(asset => {
     const ext = getExtension(asset.href, asset.title) || 'OTHER';
     if (!byExtension[ext]) byExtension[ext] = [];
-    byExtension[ext].push({ key, ...asset });
+    byExtension[ext].push(asset);
   });
 
-  // Sort extensions by count
-  const sortedExtensions = Object.entries(byExtension)
-    .sort((a, b) => b[1].length - a[1].length);
+  // Sort groups by count (largest first), then sort files within each group
+  const sortedGroups = Object.entries(byExtension)
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([ext, assets]) => [ext, assets.sort((a, b) => {
+      const titleA = a.title || a.key;
+      const titleB = b.title || b.key;
+      return titleA.localeCompare(titleB);
+    })]);
 
-  let html = '';
+  // Calculate totals
+  const totalSize = fileAssets.reduce((sum, asset) => sum + (asset['file:size'] || 0), 0);
+  // Count assets with LV95 projection data (proj:bbox indicates per-asset geometry)
+  const withGeo = fileAssets.filter(asset => asset['proj:bbox'] != null).length;
 
-  // Show file count summary
-  const totalFiles = fileAssets.length;
-  const totalSize = fileAssets.reduce((sum, [, a]) => sum + (a['file:size'] || 0), 0);
-  html += `<div class="assets-summary">${totalFiles} files (${formatSize(totalSize)} total)</div>`;
+  let html = `
+    <div class="files-header">
+      <span class="files-count">${fileAssets.length} files</span>
+      ${totalSize > 0 ? `<span class="files-size">${formatSize(totalSize)}</span>` : ''}
+      ${withGeo > 0 ? `<span class="files-geo" title="${withGeo} files with LV95 coordinates">📍 ${withGeo}</span>` : ''}
+    </div>
+  `;
 
-  // Show each extension group
-  sortedExtensions.forEach(([ext, files]) => {
-    html += `<div class="assets-group">`;
-    html += `<div class="assets-group-header">${getIcon(ext)} ${ext} (${files.length} files)</div>`;
-    html += `<div class="assets-list">`;
+  // Render collapsible groups
+  sortedGroups.forEach(([ext, assets], groupIndex) => {
+    const icon = getIcon(ext);
+    const groupSize = assets.reduce((sum, asset) => sum + (asset['file:size'] || 0), 0);
+    const groupId = `file-group-${Date.now()}-${groupIndex}`;
 
-    // Show all files in the group (pagination happens at asset-fetch level now)
-    files.forEach(asset => {
-      const fileName = asset.title || asset.key;
-      html += `
-        <div class="asset-item">
-          <a href="${asset.href}" class="asset-link" target="_blank" rel="noopener">${fileName}</a>
-          <span class="asset-size">${formatSize(asset['file:size'])}</span>
+    html += `
+      <div class="file-group">
+        <div class="file-group-header" data-target="${groupId}">
+          <span class="file-group-toggle">▶</span>
+          <span class="file-group-icon">${icon}</span>
+          <span class="file-group-ext">${ext}</span>
+          <span class="file-group-badge">${assets.length}</span>
+          <span class="file-group-size">${formatSize(groupSize)}</span>
         </div>
+        <div class="file-group-content" id="${groupId}">
+    `;
+
+    assets.forEach(asset => {
+      const title = asset.title || asset.key;
+      const size = asset['file:size'];
+      const datetime = asset.datetime;
+      const href = asset.href || '#';
+      // Check for projection extension (per-asset LV95 geometry)
+      const hasGeo = asset['proj:bbox'] != null;
+
+      // Format date if available
+      const dateStr = datetime ? formatDate(datetime) : '';
+
+      html += `
+        <a href="${href}" class="file-item asset-row" target="_blank" rel="noopener">
+          <span class="file-name">${title}</span>
+          <span class="asset-meta">
+            ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">📍</span>' : ''}
+            ${size ? `<span class="asset-size">${formatSize(size)}</span>` : ''}
+            ${dateStr ? `<span class="asset-date">${dateStr}</span>` : ''}
+          </span>
+        </a>
       `;
     });
 
@@ -596,9 +771,16 @@ function renderItems() {
               ${frequency ? `<div class="meta-row"><span class="meta-label">Frequency</span><span class="meta-value">${frequency}</span></div>` : ''}
               ${continued !== undefined ? `<div class="meta-row"><span class="meta-label">Status</span><span class="meta-value">${continued ? 'Ongoing' : 'Completed'}</span></div>` : ''}
               ${format ? `<div class="meta-row"><span class="meta-label">Format</span><span class="meta-value">${format}</span></div>` : ''}
-              ${item.bbox ? `<div class="meta-row"><span class="meta-label">Bounding Box</span><span class="meta-value bbox">[${item.bbox.map(n => n?.toFixed(4)).join(', ')}]</span></div>` : ''}
             </div>
-            ${item.bbox ? `<div class="meta-mini-map" id="minimap-${metaId}" data-bbox="${item.bbox.join(',')}" data-geometry='${JSON.stringify(item.geometry)}'></div>` : ''}
+            ${item.bbox ? `
+            <div class="meta-map-section">
+              <div class="meta-mini-map" id="minimap-${metaId}" data-bbox="${item.bbox.join(',')}" data-geometry='${JSON.stringify(item.geometry)}' data-item-id="${item.id}" data-collection-id="${currentCollection}"></div>
+              <div class="meta-bbox">
+                <div class="bbox-row"><span class="bbox-corner">SW</span><span class="bbox-coords">${item.bbox[0]?.toFixed(4)}°, ${item.bbox[1]?.toFixed(4)}°</span></div>
+                <div class="bbox-row"><span class="bbox-corner">NE</span><span class="bbox-coords">${item.bbox[2]?.toFixed(4)}°, ${item.bbox[3]?.toFixed(4)}°</span></div>
+              </div>
+            </div>
+            ` : ''}
           </div>
           ${archiveAsset ? `
           <div class="meta-actions">
@@ -646,17 +828,14 @@ function renderItems() {
     });
   }
 
-  // Row click to expand/collapse (but not on download button, map, or assets)
-  container.querySelectorAll('.file-item.file').forEach(row => {
-    row.addEventListener('click', async (e) => {
-      // Don't toggle if clicking interactive elements
-      if (e.target.closest('.download-btn') ||
-          e.target.closest('.meta-download-btn') ||
-          e.target.closest('.meta-mini-map') ||
-          e.target.closest('.meta-assets') ||
-          e.target.closest('.asset-link')) {
+  // Header row click to expand/collapse (only the top bar, not the expanded content)
+  container.querySelectorAll('.file-item.file .file-row').forEach(rowHeader => {
+    rowHeader.addEventListener('click', async (e) => {
+      // Don't toggle if clicking download button
+      if (e.target.closest('.download-btn')) {
         return;
       }
+      const row = rowHeader.closest('.file-item.file');
       const targetId = row.dataset.metaTarget;
       const itemId = row.dataset.itemId;
       const toggle = row.querySelector('.file-meta-toggle');
@@ -666,6 +845,19 @@ function renderItems() {
         toggle.classList.toggle('expanded');
         metaEl.classList.toggle('expanded');
 
+        // Update history state for back button navigation
+        if (isExpanding) {
+          // Collapse any previously expanded item first
+          if (currentExpandedItem && currentExpandedItem !== itemId) {
+            collapseItem(currentExpandedItem);
+          }
+          currentExpandedItem = itemId;
+          pushHistoryState(currentCollection, itemId);
+        } else {
+          currentExpandedItem = null;
+          pushHistoryState(currentCollection, null);
+        }
+
         // When expanding, load full item data and initialize map
         if (isExpanding) {
           // Initialize mini map
@@ -674,45 +866,33 @@ function renderItems() {
             initMiniMap(miniMapEl);
           }
 
-          // Lazy load assets if not already loaded
+          // Lazy load file assets (files are now assets within the item, not child items)
+          // Items are fetched with exclude_assets=true, so we need to fetch full item details
           const assetsContainer = metaEl.querySelector('.meta-assets-content');
           if (assetsContainer && !assetsContainer._assetsLoaded) {
             assetsContainer.innerHTML = '<div class="loading-assets"><div class="spinner"></div>Loading files...</div>';
             try {
-              const ASSET_PAGE_SIZE = 20;
-              const itemData = await fetchItemAssets(currentCollection, itemId, ASSET_PAGE_SIZE, 0);
-              const assetsMeta = itemData._assetsMeta || { total: 0, offset: 0, returned: 0 };
+              // Fetch full item with all assets (use high limit to get all files)
+              const fullItem = await fetchItemAssets(currentCollection, itemId, 10000, 0);
+              if (fullItem && fullItem.assets) {
+                assetsContainer.innerHTML = renderItemAssets(fullItem.assets);
+                assetsContainer._assetsLoaded = true;
 
-              assetsContainer.innerHTML = renderAssetsList(itemData.assets || {});
-              assetsContainer._assetsLoaded = true;
-              assetsContainer._loadedCount = assetsMeta.returned;
-              assetsContainer._totalCount = assetsMeta.total;
-
-              // Add "Show more" link if there are more assets
-              if (assetsMeta.total > assetsMeta.returned) {
-                const remaining = assetsMeta.total - assetsMeta.returned;
-                const loadMoreLink = document.createElement('div');
-                loadMoreLink.className = 'assets-more';
-                loadMoreLink.textContent = `Show ${remaining} more file${remaining !== 1 ? 's' : ''}...`;
-                assetsContainer.appendChild(loadMoreLink);
-
-                loadMoreLink.addEventListener('click', async (e) => {
-                  e.stopPropagation();
-                  loadMoreLink.textContent = 'Loading...';
-                  loadMoreLink.style.pointerEvents = 'none';
-
-                  try {
-                    // Fetch ALL assets (no limit)
-                    const response = await fetch(`${STAC_API}/collections/${currentCollection}/items/${itemId}`);
-                    if (!response.ok) throw new Error('Failed to load files');
-                    const fullItem = await response.json();
-
-                    loadMoreLink.remove();
-                    assetsContainer.innerHTML = renderAssetsList(fullItem.assets || {});
-                  } catch (err) {
-                    loadMoreLink.textContent = `Error: ${err.message}`;
-                  }
+                // Set up file group toggle handlers
+                assetsContainer.querySelectorAll('.file-group-header').forEach(header => {
+                  header.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetId = header.dataset.target;
+                    const content = document.getElementById(targetId);
+                    if (content) {
+                      header.classList.toggle('expanded');
+                      content.classList.toggle('expanded');
+                    }
+                  });
                 });
+              } else {
+                assetsContainer.innerHTML = '<div class="empty">No files found</div>';
+                assetsContainer._assetsLoaded = true;
               }
             } catch (err) {
               assetsContainer.innerHTML = `<div class="error-msg">Failed to load files: ${err.message}</div>`;
@@ -723,6 +903,31 @@ function renderItems() {
     });
   });
 
+}
+
+// Convert WGS84 (lon, lat) to Swiss LV95 (E, N)
+// Approximate formula from swisstopo documentation
+function wgs84ToLv95(lon, lat) {
+  // Convert to sexagesimal seconds and shift origin to Bern
+  const phi = (lat * 3600 - 169028.66) / 10000;
+  const lambda = (lon * 3600 - 26782.5) / 10000;
+
+  // Calculate easting (E)
+  const E = 2600072.37
+    + 211455.93 * lambda
+    - 10938.51 * lambda * phi
+    - 0.36 * lambda * phi * phi
+    - 44.54 * lambda * lambda * lambda;
+
+  // Calculate northing (N)
+  const N = 1200147.07
+    + 308807.95 * phi
+    + 3745.25 * lambda * lambda
+    + 76.63 * phi * phi
+    - 194.56 * lambda * lambda * phi
+    + 119.79 * phi * phi * phi;
+
+  return { E: Math.round(E), N: Math.round(N) };
 }
 
 // Initialize a mini map for an item
@@ -739,6 +944,11 @@ function initMiniMap(el) {
   const centerLat = (bbox[1] + bbox[3]) / 2;
   const centerLng = (bbox[0] + bbox[2]) / 2;
 
+  // Check if bbox is essentially a point (very small extent)
+  const bboxWidth = Math.abs(bbox[2] - bbox[0]);
+  const bboxHeight = Math.abs(bbox[3] - bbox[1]);
+  const isPoint = bboxWidth < 0.001 && bboxHeight < 0.001;
+
   // Create map container and controls wrapper
   const mapContainer = document.createElement('div');
   mapContainer.className = 'mini-map-container';
@@ -752,9 +962,10 @@ function initMiniMap(el) {
     doubleClickZoom: true
   });
 
-  // Add tile layer
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19
+  // Add SwissTopo tile layer (WMTS in Web Mercator projection)
+  L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.swisstopo.admin.ch/">swisstopo</a>'
   }).addTo(miniMap);
 
   // Draw the geometry
@@ -762,7 +973,7 @@ function initMiniMap(el) {
   if (geometry && geometry.type === 'Polygon') {
     const coords = geometry.coordinates[0].map(c => [c[1], c[0]]);
     const polygon = L.polygon(coords, {
-      color: '#0066cc',
+      color: '#ff0000',
       weight: 2,
       fillOpacity: 0.3
     }).addTo(miniMap);
@@ -772,8 +983,8 @@ function initMiniMap(el) {
     const [lon, lat] = geometry.coordinates;
     L.circleMarker([lat, lon], {
       radius: 6,
-      color: '#0066cc',
-      fillColor: '#0066cc',
+      color: '#ff0000',
+      fillColor: '#ff0000',
       fillOpacity: 0.5
     }).addTo(miniMap);
     miniMap.setView([lat, lon], 14);
@@ -781,28 +992,57 @@ function initMiniMap(el) {
     // Just use bbox
     fitBounds = [[bbox[1], bbox[0]], [bbox[3], bbox[2]]];
     L.rectangle(fitBounds, {
-      color: '#0066cc',
+      color: '#ff0000',
       weight: 2,
       fillOpacity: 0.2
     }).addTo(miniMap);
     miniMap.fitBounds(fitBounds, { padding: [10, 10] });
   }
 
-  // Add "Open in OSM" button
-  const openOsmBtn = document.createElement('a');
-  openOsmBtn.className = 'mini-map-osm-btn';
-  openOsmBtn.href = `https://www.openstreetmap.org/?mlat=${centerLat}&mlon=${centerLng}#map=15/${centerLat}/${centerLng}`;
-  openOsmBtn.target = '_blank';
-  openOsmBtn.rel = 'noopener';
-  openOsmBtn.title = 'Open in OpenStreetMap';
-  openOsmBtn.innerHTML = '↗';
-  el.appendChild(openOsmBtn);
+  // Build SwissTopo map.geo.admin.ch URL with KML layer from our API
+  // Calculate appropriate zoom based on extent
+  const extentSize = Math.max(bboxWidth, bboxHeight);
+  let zoom = 10;
+  if (extentSize > 0.1) zoom = 8;
+  else if (extentSize > 0.05) zoom = 9;
+  else if (extentSize > 0.01) zoom = 11;
+  else if (extentSize > 0.005) zoom = 12;
+  else zoom = 13;
+
+  // Convert center to LV95 coordinates (required by new map.geo.admin.ch URL format)
+  const lv95 = wgs84ToLv95(centerLng, centerLat);
+
+  // Get item and collection IDs for KML endpoint
+  const itemId = el.dataset.itemId;
+  const collectionId = el.dataset.collectionId;
+
+  // Build KML URL from our API (publicly accessible URL for map.geo.admin.ch to fetch)
+  // Note: This requires the API to be publicly accessible with CORS enabled
+  const kmlUrl = `${window.location.origin}${STAC_API}/kml?collection_id=${encodeURIComponent(collectionId)}&item_id=${encodeURIComponent(itemId)}`;
+
+  // Build SwissTopo URL with new 2024 format:
+  // - Hash-based URL: #/map?...
+  // - center=E,N in LV95 coordinates
+  // - z= instead of zoom=
+  // - layers=KML%7C<url> where %7C is URL-encoded pipe
+  const swisstopoUrl = `https://map.geo.admin.ch/#/map?lang=en&bgLayer=ch.swisstopo.pixelkarte-farbe&z=${zoom}&center=${lv95.E},${lv95.N}&layers=KML%7C${kmlUrl}`;
+
+  // Add "Open in SwissTopo" button
+  const openSwisstopoBtn = document.createElement('a');
+  openSwisstopoBtn.className = 'mini-map-osm-btn';
+  openSwisstopoBtn.href = swisstopoUrl;
+  openSwisstopoBtn.target = '_blank';
+  openSwisstopoBtn.rel = 'noopener';
+  openSwisstopoBtn.title = 'Open in SwissTopo';
+  openSwisstopoBtn.innerHTML = '↗';
+  el.appendChild(openSwisstopoBtn);
 
   el._mapInitialized = true;
 }
 
 // Load all collections and sensors
-async function loadCollections() {
+async function loadCollections(pushHistory = false) {
+  currentCollection = null;
   const container = document.getElementById('fileList');
   container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading collections...</div>';
   document.getElementById('error').style.display = 'none';
@@ -821,17 +1061,19 @@ async function loadCollections() {
     const collectionsData = await collectionsRes.json();
     collections = collectionsData.collections || [];
 
-    // Extract unique sensors and sources from all items and map to collections
+    // Extract unique sensors, sources, and processing levels from all items and map to collections
     if (itemsRes.ok) {
       const itemsData = await itemsRes.json();
       const sensors = new Set();
       const sources = new Set();
       sensorsByCollection = {}; // Reset mapping
       sourcesByCollection = {}; // Reset mapping
+      processingLevelsByCollection = {}; // Reset mapping
 
       (itemsData.features || []).forEach(item => {
         const sensor = item.properties?.['blatten:sensor'];
         const source = item.properties?.['blatten:source'];
+        const processingLevel = item.properties?.['blatten:processing_level'];
         const collectionId = item.collection;
 
         if (sensor) {
@@ -859,6 +1101,19 @@ async function loadCollections() {
             }
           }
         }
+
+        if (processingLevel) {
+          // Track which processing levels belong to which collections
+          if (collectionId) {
+            const levelStr = String(processingLevel);
+            if (!processingLevelsByCollection[collectionId]) {
+              processingLevelsByCollection[collectionId] = [];
+            }
+            if (!processingLevelsByCollection[collectionId].includes(levelStr)) {
+              processingLevelsByCollection[collectionId].push(levelStr);
+            }
+          }
+        }
       });
       allSensors = [...sensors].sort();
       allSources = [...sources].sort();
@@ -876,4 +1131,4 @@ async function loadCollections() {
 }
 
 // Initial load
-loadCollections();
+initializeApp();

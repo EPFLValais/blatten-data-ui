@@ -455,11 +455,11 @@ a:hover {
   color: #0066cc;
 }
 
-.file-item {
+.file-item:not(.collection-item) {
   border-bottom: 1px solid #f0f0f0;
 }
 
-.file-item:last-child {
+.file-item:not(.collection-item):last-child {
   border-bottom: none;
 }
 
@@ -577,6 +577,13 @@ a:hover {
 }
 
 /* Mini map in metadata */
+.meta-map-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
 .meta-mini-map {
   width: 180px;
   height: 140px;
@@ -585,6 +592,35 @@ a:hover {
   flex-shrink: 0;
   background: #f0f0f0;
   position: relative;
+}
+
+.meta-bbox {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.65rem;
+  color: #666;
+  max-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+}
+
+.bbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.bbox-corner {
+  font-weight: 600;
+  color: #888;
+  font-size: 0.6rem;
+  width: 1.5rem;
+  text-align: right;
+}
+
+.bbox-coords {
+  color: #555;
 }
 
 .mini-map-container {
@@ -705,6 +741,11 @@ a:hover {
   flex-shrink: 0;
 }
 
+.geo-badge {
+  font-size: 0.7rem;
+  margin-right: 0.25rem;
+}
+
 .assets-more {
   font-size: 0.8rem;
   color: #0066cc;
@@ -717,25 +758,210 @@ a:hover {
   text-decoration: underline;
 }
 
+/* Collapsible file groups */
+.files-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 0.85rem;
+}
+
+.files-count {
+  font-weight: 600;
+  color: #333;
+}
+
+.files-size {
+  color: #666;
+}
+
+.files-geo {
+  color: #666;
+  font-size: 0.8rem;
+}
+
+.file-group {
+  margin-bottom: 0.25rem;
+}
+
+.file-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.25rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.15s;
+  user-select: none;
+}
+
+.file-group-header:hover {
+  background-color: #f5f5f5;
+}
+
+.file-group-toggle {
+  font-size: 0.65rem;
+  color: #666;
+  transition: transform 0.2s;
+  width: 1rem;
+  text-align: center;
+}
+
+.file-group-header.expanded .file-group-toggle {
+  transform: rotate(90deg);
+}
+
+.file-group-icon {
+  font-size: 1rem;
+}
+
+.file-group-ext {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: #333;
+  min-width: 3rem;
+}
+
+.file-group-badge {
+  font-size: 0.7rem;
+  color: #fff;
+  background: #888;
+  padding: 0.1rem 0.4rem;
+  border-radius: 10px;
+  min-width: 1.2rem;
+  text-align: center;
+}
+
+.file-group-size {
+  font-size: 0.75rem;
+  color: #888;
+  margin-left: auto;
+}
+
+.file-group-content {
+  display: none;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.25rem 0 0.25rem 1.25rem;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.file-group-content.expanded {
+  display: flex;
+}
+
+.file-item {
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem 0.5rem;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 3px;
+  transition: background-color 0.15s;
+  border-left: 2px solid transparent;
+}
+
+.file-item:hover {
+  background-color: #f0f7ff;
+  border-left-color: #0066cc;
+}
+
+.file-name {
+  font-size: 0.8rem;
+  color: #333;
+  word-break: break-all;
+}
+
+.file-item:hover .file-name {
+  color: #0066cc;
+}
+
+.file-meta {
+  font-size: 0.7rem;
+  color: #888;
+  margin-top: 0.1rem;
+}
+
+/* Asset row in file list - horizontal layout with metadata on right */
+.file-group-content .asset-row {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.file-group-content .asset-row .file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: #888;
+}
+
+.asset-size {
+  min-width: 4rem;
+  text-align: right;
+}
+
+.asset-date {
+  min-width: 5rem;
+  text-align: right;
+  color: #999;
+}
+
+.asset-geo {
+  font-size: 0.75rem;
+}
+
 /* Collection styles */
 .collection-item {
   cursor: pointer;
+  transition: background 0.15s;
 }
 
 .collection-item:hover {
-  background: #f0f7ff;
+  background: #f5f7fa;
+}
+
+.collection-item .file-row {
+  padding: 0.75rem 1rem 0.25rem;
+}
+
+.collection-item .file-name .name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  letter-spacing: -0.01em;
+}
+
+.collection-item:hover .file-name .name {
+  color: #0066cc;
 }
 
 .collection-description {
-  padding: 0.25rem 0 0 2.5rem;
-  font-size: 0.8rem;
-  color: #666;
-  line-height: 1.4;
+  padding: 0 1rem 0.75rem 1rem;
+  font-size: 0.82rem;
+  color: #555;
+  line-height: 1.5;
 }
 
 .collection-date {
-  font-size: 0.75rem;
-  color: #888;
+  font-size: 0.8rem;
+  color: #666;
+  white-space: nowrap;
 }
 
 /* Download button in row */
@@ -759,17 +985,25 @@ a:hover {
   color: white;
 }
 
-/* Make file rows clickable */
-.file-item.file {
+/* Make file header rows clickable (not the expanded content) */
+.file-item.file .file-row {
   cursor: pointer;
+  align-items: center;
 }
 
-.file-item.file:hover {
+.file-item.file .file-row:hover {
   background: #f8f9fa;
 }
 
-.file-item.file .file-row {
-  align-items: center;
+/* Expanded content should have default cursor */
+.file-item.file .file-meta {
+  cursor: default;
+}
+
+/* Allow text selection in expanded content */
+.file-item.file .file-meta .meta-value,
+.file-item.file .file-meta .meta-bbox {
+  user-select: text;
 }
 
 /* Meta actions section */
@@ -1070,10 +1304,18 @@ a:hover {
     flex-direction: column;
   }
 
+  .meta-map-section {
+    width: 100%;
+    margin-top: 0.75rem;
+  }
+
   .meta-mini-map {
     width: 100%;
     height: 150px;
-    margin-top: 0.75rem;
+  }
+
+  .meta-bbox {
+    max-width: 100%;
   }
 
   /* Filter responsive */
