@@ -36,6 +36,9 @@
   <header class="site-header">
     <div class="header-content">
       <div class="header-left">
+        <a href="https://blatten-vs.ch/" target="_blank" rel="noopener" class="header-logo header-logo-blatten">
+          <img src="images/logos/blatten.svg" alt="Gemeinde Blatten">
+        </a>
         <a href="https://www.vs.ch/" target="_blank" rel="noopener" class="header-logo">
           <img src="images/logos/valais.svg" alt="Canton du Valais">
         </a>
@@ -53,9 +56,6 @@
   </header>
 
   <div class="container">
-    <div class="prototype-banner">
-      This page is currently under development. The content shown here is for demonstration purposes only and does not reflect the final dataset.
-    </div>
     <div class="content-card">
       <div class="dataset-header">
         <h1 class="dataset-title">Dataset collected during the 2025 Birch glacier collapse and landslide at Blatten, CH-VS</h1>
@@ -116,7 +116,7 @@
       </div>
       <div class="collapsible-content" id="downloadsContent">
         <div class="collapsible-inner">
-          <p class="dev-notice"><strong>Note:</strong> These files are dummy files zeroed out for development purposes and contain no real data.</p>
+
           <div id="error" class="error-msg" style="display: none;"></div>
 
           <div class="file-browser">
@@ -130,6 +130,12 @@
           </div>
         </div>
       </div>
+
+      <p class="stac-api-note">
+        This data is also available programmatically via the
+        <a href="/stac" target="_blank" rel="noopener">STAC API</a>.
+        Use of the API is subject to the <a href="#license-section">license and disclaimer</a> below.
+      </p>
 
       <div class="section">
         <h2 class="section-title">
@@ -159,13 +165,13 @@
               <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
               <polyline points="22,6 12,13 2,6"></polyline>
             </svg>
-            <a href="mailto:email@canton.ch">email@canton.ch</a>
+            <a href="mailto:data-blatten@admin.vs.ch">data-blatten@admin.vs.ch</a>
           </p>
         </div>
       </div>
 
 
-      <div class="section">
+      <div class="section" id="license-section">
         <h2 class="section-title">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"></circle>
@@ -199,7 +205,8 @@
           <p style="margin-top: 1rem; font-size: 0.9rem; color: #666;">
             <strong>Disclaimer:</strong> This data is provided "as is" without warranty of any kind,
             express or implied. The data providers shall not be liable for any damages arising from
-            the use of this dataset.
+            the use of this dataset. Use of the STAC API constitutes acknowledgement that you have
+            read the Dataset Overview and Detailed Report and agree to the license terms above.
           </p>
         </div>
       </div>

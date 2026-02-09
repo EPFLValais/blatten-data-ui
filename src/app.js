@@ -19,6 +19,8 @@ let currentFilters = {
   dateTo: '',
   bbox: null            // [minLon, minLat, maxLon, maxLat] or null
 };
+let dataDateMin = null;
+let dataDateMax = null;
 let filterDebounceTimer = null;
 let serverFilterDebounceTimer = null;
 let currentExpandedItem = null; // Track currently expanded item for history
@@ -247,14 +249,21 @@ function updateBreadcrumb() {
         ${hasAdvancedFilters ? '<button id="clearFilters" class="filter-clear-btn" title="Clear all filters">✕</button>' : ''}
       </div>
       <div class="filter-row-advanced" id="advancedFilters" style="display: ${hasAdvancedFilters ? 'flex' : 'none'};">
-        <div class="filter-group">
-          <label for="dateFromFilter">From</label>
-          <input type="datetime-local" id="dateFromFilter" value="${currentFilters.dateFrom}">
+        ${dataDateMin && dataDateMax ? `
+        <div class="filter-group filter-group-date-range">
+          <label>Date Range</label>
+          <div class="date-range-container">
+            <div class="date-range-labels">
+              <span id="dateFromLabel">${currentFilters.dateFrom ? new Date(currentFilters.dateFrom).toISOString().slice(0, 10) : dataDateMin.toISOString().slice(0, 10)}</span>
+              <span id="dateToLabel">${currentFilters.dateTo ? new Date(currentFilters.dateTo).toISOString().slice(0, 10) : dataDateMax.toISOString().slice(0, 10)}</span>
+            </div>
+            <div class="date-range-slider">
+              <input type="range" id="dateFromSlider" min="0" max="1000" value="${currentFilters.dateFrom ? Math.round((new Date(currentFilters.dateFrom) - dataDateMin) / (dataDateMax - dataDateMin) * 1000) : 0}">
+              <input type="range" id="dateToSlider" min="0" max="1000" value="${currentFilters.dateTo ? Math.round((new Date(currentFilters.dateTo) - dataDateMin) / (dataDateMax - dataDateMin) * 1000) : 1000}">
+            </div>
+          </div>
         </div>
-        <div class="filter-group">
-          <label for="dateToFilter">To</label>
-          <input type="datetime-local" id="dateToFilter" value="${currentFilters.dateTo}">
-        </div>
+        ` : ''}
         <div class="filter-group filter-group-bbox">
           <label>Bbox</label>
           <div class="bbox-inputs">
@@ -300,16 +309,16 @@ function updateBreadcrumb() {
   }
 
   // Attach filter event listeners
-  // Text search - client-side only, debounced
+  // Text search - server-side, debounced
   document.getElementById('searchFilter').addEventListener('input', (e) => {
     currentFilters.search = e.target.value;
-    applyFilters(); // Debounced client-side filter
+    applyServerFiltersDebounced();
   });
 
   // Sensor - server-side, immediate
   document.getElementById('sensorFilter').addEventListener('change', (e) => {
     currentFilters.sensor = e.target.value;
-    applyFilters(true); // Immediate client-side filter
+    applyServerFiltersDebounced(true);
   });
 
   // Source - server-side, immediate
@@ -349,16 +358,43 @@ function updateBreadcrumb() {
     });
   }
 
-  // Date filters - server-side, debounced
-  document.getElementById('dateFromFilter').addEventListener('change', (e) => {
-    currentFilters.dateFrom = e.target.value;
-    applyServerFiltersDebounced();
-  });
+  // Date range slider - server-side, debounced
+  const dateFromSlider = document.getElementById('dateFromSlider');
+  const dateToSlider = document.getElementById('dateToSlider');
+  if (dateFromSlider && dateToSlider && dataDateMin && dataDateMax) {
+    const totalMs = dataDateMax.getTime() - dataDateMin.getTime();
 
-  document.getElementById('dateToFilter').addEventListener('change', (e) => {
-    currentFilters.dateTo = e.target.value;
-    applyServerFiltersDebounced();
-  });
+    const sliderToDate = (val) => {
+      return new Date(dataDateMin.getTime() + (val / 1000) * totalMs);
+    };
+
+    const updateDateLabels = () => {
+      const fromDate = sliderToDate(parseInt(dateFromSlider.value));
+      const toDate = sliderToDate(parseInt(dateToSlider.value));
+      const fromLabel = document.getElementById('dateFromLabel');
+      const toLabel = document.getElementById('dateToLabel');
+      if (fromLabel) fromLabel.textContent = fromDate.toISOString().slice(0, 10);
+      if (toLabel) toLabel.textContent = toDate.toISOString().slice(0, 10);
+    };
+
+    const onSliderInput = () => {
+      // Ensure from <= to
+      if (parseInt(dateFromSlider.value) > parseInt(dateToSlider.value)) {
+        dateFromSlider.value = dateToSlider.value;
+      }
+      updateDateLabels();
+
+      const fromVal = parseInt(dateFromSlider.value);
+      const toVal = parseInt(dateToSlider.value);
+      // Only set filters if not at extremes
+      currentFilters.dateFrom = fromVal > 0 ? sliderToDate(fromVal).toISOString() : '';
+      currentFilters.dateTo = toVal < 1000 ? sliderToDate(toVal).toISOString() : '';
+      applyServerFiltersDebounced();
+    };
+
+    dateFromSlider.addEventListener('input', onSliderInput);
+    dateToSlider.addEventListener('input', onSliderInput);
+  }
 
   // Bbox inputs - server-side, debounced
   const bboxInputs = ['bboxMinLon', 'bboxMinLat', 'bboxMaxLon', 'bboxMaxLat'];
@@ -435,6 +471,8 @@ function buildFilterParams() {
 
   if (currentFilters.source) params.set('source', currentFilters.source);
   if (currentFilters.processingLevel) params.set('processing_level', currentFilters.processingLevel);
+  if (currentFilters.sensor) params.set('sensor', currentFilters.sensor);
+  if (currentFilters.search) params.set('q', currentFilters.search);
 
   if (currentFilters.dateFrom || currentFilters.dateTo) {
     const from = currentFilters.dateFrom ? new Date(currentFilters.dateFrom).toISOString() : '..';
@@ -672,30 +710,8 @@ function renderItemAssets(assets) {
 function renderItems() {
   const container = document.getElementById('fileList');
 
-  // Apply filters
-  const filteredItems = items.filter(item => {
-    const props = item.properties || {};
-    const searchLower = currentFilters.search.toLowerCase();
-
-    // Search filter - check title, description, sensor, source
-    if (searchLower) {
-      const title = (props.title || item.id || '').toLowerCase();
-      const description = (props.description || '').toLowerCase();
-      const sensor = (props['blatten:sensor'] || '').toLowerCase();
-      const source = (props['blatten:source'] || '').toLowerCase();
-      if (!title.includes(searchLower) && !description.includes(searchLower) &&
-          !sensor.includes(searchLower) && !source.includes(searchLower)) {
-        return false;
-      }
-    }
-
-    // Sensor filter
-    if (currentFilters.sensor && props['blatten:sensor'] !== currentFilters.sensor) {
-      return false;
-    }
-
-    return true;
-  });
+  // Items are already filtered server-side (search, sensor, source, etc.)
+  const filteredItems = items;
 
   if (filteredItems.length === 0) {
     container.innerHTML = '<div class="empty">No items match the current filters</div>';
@@ -1048,27 +1064,65 @@ async function loadCollections(pushHistory = false) {
   document.getElementById('error').style.display = 'none';
 
   try {
-    // Fetch collections and all items (for sensor/source lists) in parallel
+    // Fetch collections and filtered items in parallel
+    // Also fetch unfiltered items on first load to populate filter dropdowns
     const params = buildFilterParams();
     params.set('limit', '1000');
-    const [collectionsRes, itemsRes] = await Promise.all([
+    const needsFilterOptions = allSources.length === 0 && allSensors.length === 0;
+    const unfilteredParams = new URLSearchParams();
+    unfilteredParams.set('limit', '1000');
+    unfilteredParams.set('exclude_assets', 'true');
+    const fetches = [
       fetch(`${STAC_API}/collections`),
-      fetch(`${STAC_API}/search?${params}`)
-    ]);
+      fetch(`${STAC_API}/search?${params}`),
+    ];
+    if (needsFilterOptions) {
+      fetches.push(fetch(`${STAC_API}/search?${unfilteredParams}`));
+    }
+    const [collectionsRes, itemsRes, unfilteredRes] = await Promise.all(fetches);
 
     if (!collectionsRes.ok) throw new Error('Failed to load STAC collections');
 
     const collectionsData = await collectionsRes.json();
     collections = collectionsData.collections || [];
 
-    // Extract unique sensors, sources, and processing levels from all items and map to collections
-    if (itemsRes.ok) {
-      const itemsData = await itemsRes.json();
+    // Compute overall date range from collection extents
+    if (!dataDateMin || !dataDateMax) {
+      let minDate = null, maxDate = null;
+      collections.forEach(c => {
+        const interval = c.extent?.temporal?.interval?.[0];
+        if (interval) {
+          const start = interval[0] ? new Date(interval[0]) : null;
+          const end = interval[1] ? new Date(interval[1]) : null;
+          if (start && (!minDate || start < minDate)) minDate = start;
+          if (end && (!maxDate || end > maxDate)) maxDate = end;
+        }
+      });
+      dataDateMin = minDate;
+      dataDateMax = maxDate;
+    }
+
+    // Build filter dropdown options from unfiltered items (first load only)
+    if (needsFilterOptions && unfilteredRes?.ok) {
+      const allItemsData = await unfilteredRes.json();
       const sensors = new Set();
       const sources = new Set();
-      sensorsByCollection = {}; // Reset mapping
-      sourcesByCollection = {}; // Reset mapping
-      processingLevelsByCollection = {}; // Reset mapping
+      (allItemsData.features || []).forEach(item => {
+        const sensor = item.properties?.['blatten:sensor'];
+        const source = item.properties?.['blatten:source'];
+        if (sensor) sensors.add(sensor);
+        if (source) sources.add(source);
+      });
+      allSensors = [...sensors].sort();
+      allSources = [...sources].sort();
+    }
+
+    // Extract per-collection mappings from filtered items
+    if (itemsRes.ok) {
+      const itemsData = await itemsRes.json();
+      sensorsByCollection = {};
+      sourcesByCollection = {};
+      processingLevelsByCollection = {};
 
       (itemsData.features || []).forEach(item => {
         const sensor = item.properties?.['blatten:sensor'];
@@ -1076,47 +1130,22 @@ async function loadCollections(pushHistory = false) {
         const processingLevel = item.properties?.['blatten:processing_level'];
         const collectionId = item.collection;
 
-        if (sensor) {
-          sensors.add(sensor);
-          // Track which sensors belong to which collections
-          if (collectionId) {
-            if (!sensorsByCollection[collectionId]) {
-              sensorsByCollection[collectionId] = [];
-            }
-            if (!sensorsByCollection[collectionId].includes(sensor)) {
-              sensorsByCollection[collectionId].push(sensor);
-            }
-          }
+        if (sensor && collectionId) {
+          if (!sensorsByCollection[collectionId]) sensorsByCollection[collectionId] = [];
+          if (!sensorsByCollection[collectionId].includes(sensor)) sensorsByCollection[collectionId].push(sensor);
         }
 
-        if (source) {
-          sources.add(source);
-          // Track which sources belong to which collections
-          if (collectionId) {
-            if (!sourcesByCollection[collectionId]) {
-              sourcesByCollection[collectionId] = [];
-            }
-            if (!sourcesByCollection[collectionId].includes(source)) {
-              sourcesByCollection[collectionId].push(source);
-            }
-          }
+        if (source && collectionId) {
+          if (!sourcesByCollection[collectionId]) sourcesByCollection[collectionId] = [];
+          if (!sourcesByCollection[collectionId].includes(source)) sourcesByCollection[collectionId].push(source);
         }
 
-        if (processingLevel) {
-          // Track which processing levels belong to which collections
-          if (collectionId) {
-            const levelStr = String(processingLevel);
-            if (!processingLevelsByCollection[collectionId]) {
-              processingLevelsByCollection[collectionId] = [];
-            }
-            if (!processingLevelsByCollection[collectionId].includes(levelStr)) {
-              processingLevelsByCollection[collectionId].push(levelStr);
-            }
-          }
+        if (processingLevel && collectionId) {
+          const levelStr = String(processingLevel);
+          if (!processingLevelsByCollection[collectionId]) processingLevelsByCollection[collectionId] = [];
+          if (!processingLevelsByCollection[collectionId].includes(levelStr)) processingLevelsByCollection[collectionId].push(levelStr);
         }
       });
-      allSensors = [...sensors].sort();
-      allSources = [...sources].sort();
     }
 
     // Sort collections by title

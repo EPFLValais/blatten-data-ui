@@ -26,6 +26,8 @@ a:hover {
   background: #fff;
   border-bottom: 1px solid #e0e0e0;
   padding: 0.5rem 0;
+  position: relative;
+  z-index: 100;
 }
 
 .header-content {
@@ -33,15 +35,16 @@ a:hover {
   margin: 0 auto;
   padding: 0 2rem;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  height: 60px;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: 0.5rem;
 }
 
 .header-logo {
@@ -55,16 +58,17 @@ a:hover {
 }
 
 .header-logo img {
-  height: 50px;
+  height: 60px;
   width: auto;
 }
+
 
 .header-right {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  height: 50px;
+  height: 58px;
 }
 
 .header-right a {
@@ -84,12 +88,12 @@ a:hover {
 }
 
 .header-right a:first-child img {
-  height: 25px;
+  height: 30px;
   width: auto;
 }
 
 .header-right a:last-child img {
-  height: 20px;
+  height: 18px;
   width: auto;
 }
 
@@ -385,6 +389,89 @@ a:hover {
 .filter-group input[type="datetime-local"]:focus {
   outline: none;
   border-color: #0066cc;
+}
+
+/* Date range slider */
+.filter-group-date-range {
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 200px;
+  flex: 1;
+}
+
+.date-range-container {
+  width: 100%;
+}
+
+.date-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: #555;
+  margin-bottom: 0.2rem;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+.date-range-slider {
+  position: relative;
+  height: 20px;
+  width: 100%;
+}
+
+.date-range-slider input[type="range"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+}
+
+.date-range-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: #ddd;
+  border-radius: 2px;
+}
+
+.date-range-slider input[type="range"]:first-child::-webkit-slider-runnable-track {
+  background: #ddd;
+}
+
+.date-range-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #0066cc;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  margin-top: -5px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.date-range-slider input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: #ddd;
+  border-radius: 2px;
+  border: none;
+}
+
+.date-range-slider input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #0066cc;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .filter-group-bbox {
@@ -1119,6 +1206,13 @@ a:hover {
   border: 1px solid #fde047;
 }
 
+.stac-api-note {
+  padding: 0.75rem 2rem;
+  font-size: 0.85rem;
+  color: #888;
+  border-bottom: 1px solid #eee;
+}
+
 /* Contact info */
 .contact-email {
   display: inline-flex;
@@ -1353,6 +1447,19 @@ a:hover {
 
   .meta-bbox {
     max-width: 100%;
+  }
+
+  .header-left {
+    gap: 0.75rem;
+  }
+
+
+  .header-logo img {
+    height: 40px;
+  }
+
+  .site-title {
+    font-size: 1.1rem;
   }
 
   /* Filter responsive */
