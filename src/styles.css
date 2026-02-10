@@ -312,6 +312,10 @@ a:hover {
   min-height: 1.5em;
 }
 
+.file-nav-title .clear-all-filters-btn {
+  margin-left: auto;
+}
+
 .file-nav-sep {
   color: #999;
 }
@@ -324,13 +328,28 @@ a:hover {
   white-space: nowrap;
 }
 
-/* Filter controls */
+/* Filter controls - two-column layout */
 .file-filters {
   display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
+  gap: 0.75rem;
   width: 100%;
   min-width: 0;
+}
+
+.filter-controls-left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.filter-controls-right {
+  flex-shrink: 0;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 /* Search input with clear button */
@@ -503,7 +522,7 @@ a:hover {
   flex-direction: column;
   align-items: flex-start;
   min-width: 200px;
-  flex: 1;
+  max-width: 100%;
 }
 
 .date-range-container {
@@ -592,31 +611,193 @@ a:hover {
 
 .filter-group-bbox {
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
 }
 
-.bbox-inputs {
+.bbox-map-header {
   display: flex;
-  gap: 0.25rem;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.bbox-inputs input[type="number"] {
-  width: 70px;
-  padding: 0.35rem 0.4rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+.bbox-map-header label {
   font-size: 0.75rem;
+  color: #666;
 }
 
-.bbox-inputs input[type="number"]:focus {
+.bbox-reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #ccc;
+  border-radius: 50%;
+  background: white;
+  color: #999;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.bbox-reset-btn:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: white;
+}
+
+.bbox-map-container {
+  width: 100%;
+  height: 200px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  background: #f0f0f0;
+}
+
+.bbox-map-hint {
+  font-size: 0.65rem;
+  color: #999;
+  text-align: center;
+}
+
+/* Bbox coordinate display */
+.bbox-coords-display {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.65rem;
+  color: #666;
+  padding: 0.2rem 0;
+}
+
+.bbox-coord-label {
+  font-weight: 600;
+  color: #888;
+  font-size: 0.6rem;
+}
+
+.bbox-coord-val {
+  color: #555;
+  margin-right: 0.3rem;
+}
+
+.bbox-edit-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: white;
+  color: #888;
+  font-size: 0.7rem;
+  cursor: pointer;
+  margin-left: auto;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.bbox-edit-toggle-btn:hover,
+.bbox-edit-toggle-btn.active {
+  background: #0066cc;
+  border-color: #0066cc;
+  color: white;
+}
+
+/* Bbox edit panel */
+.bbox-edit-panel {
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem;
+  background: #f8f9fa;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.bbox-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.bbox-edit-row label {
+  font-size: 0.65rem;
+  color: #666;
+  width: 2.5rem;
+  text-align: right;
+}
+
+.bbox-edit-row input[type="number"] {
+  width: 5.5rem;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+.bbox-edit-row input[type="number"]:focus {
   outline: none;
   border-color: #0066cc;
 }
 
-.bbox-inputs input[type="number"]::placeholder {
-  font-size: 0.65rem;
-  color: #999;
+.bbox-edit-apply-btn {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #0066cc;
+  border-radius: 3px;
+  background: #0066cc;
+  color: white;
+  font-size: 0.7rem;
+  cursor: pointer;
+  align-self: flex-end;
+  transition: background 0.15s;
 }
+
+.bbox-edit-apply-btn:hover {
+  background: #0055aa;
+}
+
+/* Bbox corner markers on the map */
+.bbox-corner-marker {
+  width: 12px;
+  height: 12px;
+  background: #0066cc;
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  cursor: grab;
+  z-index: 1000 !important;
+}
+
+.bbox-corner-marker:active {
+  cursor: grabbing;
+}
+
+/* Make the bbox rectangle fill area show grab cursor */
+.bbox-map-container path.leaflet-interactive {
+  cursor: grab;
+}
+
+.bbox-map-container path.leaflet-interactive:active {
+  cursor: grabbing;
+}
+
+/* Corner markers - Leaflet wraps markers in a .leaflet-marker-icon element */
+.bbox-corner-marker {
+  cursor: move !important;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 10000 !important;
+}
+
+.bbox-corner-marker-sw { cursor: nesw-resize !important; }
+.bbox-corner-marker-ne { cursor: nesw-resize !important; }
+.bbox-corner-marker-nw { cursor: nwse-resize !important; }
+.bbox-corner-marker-se { cursor: nwse-resize !important; }
 
 .filter-toggle-btn {
   display: flex;
@@ -1580,7 +1761,15 @@ a:hover {
 
   /* Filter responsive */
   .file-filters {
+    flex-direction: column;
+  }
+
+  .filter-controls-right {
     width: 100%;
+  }
+
+  .bbox-map-container {
+    height: 150px;
   }
 
   .filter-row {

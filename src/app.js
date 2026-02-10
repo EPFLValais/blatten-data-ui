@@ -21,6 +21,9 @@ let currentFilters = {
 };
 let dataDateMin = null;
 let dataDateMax = null;
+let dataBboxExtent = null; // [west, south, east, north] from all collections
+let bboxFilterMap = null;  // Leaflet map instance for bbox filter
+let bboxFilterRect = null; // Current bbox rectangle on the map
 let filterDebounceTimer = null;
 let serverFilterDebounceTimer = null;
 let currentExpandedItem = null; // Track currently expanded item for history
@@ -225,28 +228,41 @@ function updateBreadcrumb() {
   const hasAdvancedFilters = currentFilters.dateFrom || currentFilters.dateTo || currentFilters.bbox;
   const hasAnyFilter = currentFilters.search || currentFilters.sensor || currentFilters.source || currentFilters.processingLevel || hasAdvancedFilters;
 
-  const filtersHtml = `
-    <div class="filter-container">
-      <div class="filter-row">
-        <div class="search-input-wrapper">
-          <input type="text" id="searchFilter" placeholder="Search..." value="${currentFilters.search}">
-          <button class="search-clear-btn" id="searchClearBtn" style="display: ${currentFilters.search ? 'flex' : 'none'};" title="Clear search">&times;</button>
+  const titleHtml = !currentCollection
+    ? `<span>All Collections</span>`
+    : `<a href="#" id="backToCollections">&larr; All Collections</a>
+       <span class="file-nav-sep">/</span>
+       <span class="file-nav-collection">${(collections.find(c => c.id === currentCollection)?.title) || currentCollection}</span>`;
+
+  // Current bbox display values
+  const bboxDisplay = currentFilters.bbox || dataBboxExtent;
+  const bboxIsFiltered = !!currentFilters.bbox;
+
+  breadcrumb.innerHTML = `
+    <div class="file-nav-title">
+      ${titleHtml}
+    </div>
+    <div class="file-filters">
+      <div class="filter-controls-left">
+        <div class="filter-row">
+          <div class="search-input-wrapper">
+            <input type="text" id="searchFilter" placeholder="Search..." value="${currentFilters.search}">
+            <button class="search-clear-btn" id="searchClearBtn" style="display: ${currentFilters.search ? 'flex' : 'none'};" title="Clear search">&times;</button>
+          </div>
+          <select id="sensorFilter">
+            <option value="">All Sensors</option>
+            ${sensorOptions}
+          </select>
+          <select id="sourceFilter">
+            <option value="">All Sources</option>
+            ${sourceOptions}
+          </select>
+          <select id="processingLevelFilter">
+            <option value="">All Levels</option>
+            ${processingLevelOptions}
+          </select>
+          <button id="clearAllFilters" class="clear-all-filters-btn" ${hasAnyFilter ? '' : 'disabled'}>Clear</button>
         </div>
-        <select id="sensorFilter">
-          <option value="">All Sensors</option>
-          ${sensorOptions}
-        </select>
-        <select id="sourceFilter">
-          <option value="">All Sources</option>
-          ${sourceOptions}
-        </select>
-        <select id="processingLevelFilter">
-          <option value="">All Levels</option>
-          ${processingLevelOptions}
-        </select>
-        <button id="clearAllFilters" class="clear-all-filters-btn" ${hasAnyFilter ? '' : 'disabled'}>Clear Filters</button>
-      </div>
-      <div class="filter-row-advanced" id="advancedFilters" style="display: flex;">
         ${dataDateMin && dataDateMax ? `
         <div class="filter-group filter-group-date-range">
           <label>Date Range</label>
@@ -262,45 +278,40 @@ function updateBreadcrumb() {
           </div>
         </div>
         ` : ''}
-        <div class="filter-group filter-group-bbox">
-          <label>Bbox</label>
-          <div class="bbox-inputs">
-            <input type="number" id="bboxMinLon" placeholder="Min Lon" step="any" value="${currentFilters.bbox?.[0] ?? ''}">
-            <input type="number" id="bboxMinLat" placeholder="Min Lat" step="any" value="${currentFilters.bbox?.[1] ?? ''}">
-            <input type="number" id="bboxMaxLon" placeholder="Max Lon" step="any" value="${currentFilters.bbox?.[2] ?? ''}">
-            <input type="number" id="bboxMaxLat" placeholder="Max Lat" step="any" value="${currentFilters.bbox?.[3] ?? ''}">
+      </div>
+      <div class="filter-controls-right">
+        <div id="bboxMapContainer" class="bbox-map-container"></div>
+        <div class="bbox-coords-display">
+          <span class="bbox-coord-label">SW</span>
+          <span id="bboxSW" class="bbox-coord-val">${bboxDisplay ? `${bboxDisplay[0].toFixed(4)}, ${bboxDisplay[1].toFixed(4)}` : '-'}</span>
+          <span class="bbox-coord-label">NE</span>
+          <span id="bboxNE" class="bbox-coord-val">${bboxDisplay ? `${bboxDisplay[2].toFixed(4)}, ${bboxDisplay[3].toFixed(4)}` : '-'}</span>
+          <button id="bboxEditToggle" class="bbox-edit-toggle-btn" title="Edit coordinates">&#9998;</button>
+          ${bboxIsFiltered ? '<button id="bboxReset" class="bbox-reset-btn" title="Reset to full extent">&times;</button>' : ''}
+        </div>
+        <div id="bboxEditPanel" class="bbox-edit-panel" style="display: none;">
+          <div class="bbox-edit-row">
+            <label>West</label><input type="number" id="bboxEditW" step="0.0001" value="${bboxDisplay ? bboxDisplay[0].toFixed(4) : ''}">
+            <label>South</label><input type="number" id="bboxEditS" step="0.0001" value="${bboxDisplay ? bboxDisplay[1].toFixed(4) : ''}">
           </div>
+          <div class="bbox-edit-row">
+            <label>East</label><input type="number" id="bboxEditE" step="0.0001" value="${bboxDisplay ? bboxDisplay[2].toFixed(4) : ''}">
+            <label>North</label><input type="number" id="bboxEditN" step="0.0001" value="${bboxDisplay ? bboxDisplay[3].toFixed(4) : ''}">
+          </div>
+          <button id="bboxEditApply" class="bbox-edit-apply-btn">Apply</button>
         </div>
       </div>
     </div>
   `;
 
-  if (!currentCollection) {
-    breadcrumb.innerHTML = `
-      <div class="file-nav-title">
-        <span>All Collections</span>
-      </div>
-      <div class="file-filters">${filtersHtml}</div>
-    `;
-  } else {
-    const collection = collections.find(c => c.id === currentCollection);
-    const title = collection?.title || currentCollection;
-
-    breadcrumb.innerHTML = `
-      <div class="file-nav-title">
-        <a href="#" id="backToCollections">&larr; All Collections</a>
-        <span class="file-nav-sep">/</span>
-        <span class="file-nav-collection">${title}</span>
-      </div>
-      <div class="file-filters">${filtersHtml}</div>
-    `;
-
-    document.getElementById('backToCollections').addEventListener('click', (e) => {
+  // Back button (only exists in collection view)
+  const backBtn = document.getElementById('backToCollections');
+  if (backBtn) {
+    backBtn.addEventListener('click', (e) => {
       e.preventDefault();
       pushHistoryState(null, null);
       currentCollection = null;
       currentExpandedItem = null;
-      // Preserve current filters when navigating back
       loadCollections(false);
     });
   }
@@ -391,23 +402,215 @@ function updateBreadcrumb() {
     dateToSlider.addEventListener('input', onSliderInput);
   }
 
-  // Bbox inputs - server-side, debounced
-  const bboxInputs = ['bboxMinLon', 'bboxMinLat', 'bboxMaxLon', 'bboxMaxLat'];
-  bboxInputs.forEach(id => {
-    document.getElementById(id).addEventListener('input', () => {
-      const minLon = parseFloat(document.getElementById('bboxMinLon').value);
-      const minLat = parseFloat(document.getElementById('bboxMinLat').value);
-      const maxLon = parseFloat(document.getElementById('bboxMaxLon').value);
-      const maxLat = parseFloat(document.getElementById('bboxMaxLat').value);
+  // Bbox map - interactive area filter
+  initBboxFilterMap();
 
-      if (!isNaN(minLon) && !isNaN(minLat) && !isNaN(maxLon) && !isNaN(maxLat)) {
-        currentFilters.bbox = [minLon, minLat, maxLon, maxLat];
-      } else if (isNaN(minLon) && isNaN(minLat) && isNaN(maxLon) && isNaN(maxLat)) {
-        currentFilters.bbox = null;
-      }
-      applyServerFiltersDebounced();
+  // Bbox reset button
+  const bboxResetBtn = document.getElementById('bboxReset');
+  if (bboxResetBtn) {
+    bboxResetBtn.addEventListener('click', () => {
+      currentFilters.bbox = null;
+      applyServerFiltersDebounced(true);
     });
+  }
+
+  // Bbox edit toggle button
+  const bboxEditToggle = document.getElementById('bboxEditToggle');
+  const bboxEditPanel = document.getElementById('bboxEditPanel');
+  if (bboxEditToggle && bboxEditPanel) {
+    bboxEditToggle.addEventListener('click', () => {
+      const isVisible = bboxEditPanel.style.display !== 'none';
+      bboxEditPanel.style.display = isVisible ? 'none' : 'flex';
+      bboxEditToggle.classList.toggle('active', !isVisible);
+    });
+  }
+
+  // Bbox edit apply button
+  const bboxEditApply = document.getElementById('bboxEditApply');
+  if (bboxEditApply) {
+    bboxEditApply.addEventListener('click', () => {
+      const w = parseFloat(document.getElementById('bboxEditW').value);
+      const s = parseFloat(document.getElementById('bboxEditS').value);
+      const e = parseFloat(document.getElementById('bboxEditE').value);
+      const n = parseFloat(document.getElementById('bboxEditN').value);
+      if (!isNaN(w) && !isNaN(s) && !isNaN(e) && !isNaN(n) && w < e && s < n) {
+        currentFilters.bbox = [w, s, e, n];
+        bboxEditPanel.style.display = 'none';
+        applyServerFiltersDebounced(true);
+      }
+    });
+  }
+}
+
+// Initialize or update the bbox filter map
+function initBboxFilterMap() {
+  const container = document.getElementById('bboxMapContainer');
+  if (!container || !dataBboxExtent) return;
+
+  // Destroy previous map instance if it exists
+  if (bboxFilterMap) {
+    bboxFilterMap.remove();
+    bboxFilterMap = null;
+    bboxFilterRect = null;
+  }
+
+  const [west, south, east, north] = dataBboxExtent;
+  const fullBounds = L.latLngBounds([south, west], [north, east]);
+
+  // Use current filter bbox or full extent
+  const activeBbox = currentFilters.bbox || dataBboxExtent;
+  const [aw, as, ae, an] = activeBbox;
+
+  const map = L.map(container, {
+    zoomControl: false,
+    attributionControl: false,
+    scrollWheelZoom: true,
+    doubleClickZoom: true
   });
+
+  L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg', {
+    maxZoom: 19
+  }).addTo(map);
+
+  map.fitBounds(fullBounds, { padding: [15, 15] });
+
+  // Draw the editable rectangle (always visible)
+  const rectStyle = {
+    color: currentFilters.bbox ? '#0066cc' : '#666',
+    weight: 2,
+    fillOpacity: currentFilters.bbox ? 0.15 : 0.05,
+    dashArray: currentFilters.bbox ? '5, 5' : '3, 3'
+  };
+  bboxFilterRect = L.rectangle([[as, aw], [an, ae]], rectStyle).addTo(map);
+
+  // Create 4 draggable corner markers
+  const mkIcon = (dir) => L.divIcon({ className: `bbox-corner-marker bbox-corner-marker-${dir}`, iconSize: [12, 12], iconAnchor: [6, 6] });
+  const sw = L.marker([as, aw], { icon: mkIcon('sw'), draggable: true, zIndexOffset: 1000 }).addTo(map);
+  const ne = L.marker([an, ae], { icon: mkIcon('ne'), draggable: true, zIndexOffset: 1000 }).addTo(map);
+  const nw = L.marker([an, aw], { icon: mkIcon('nw'), draggable: true, zIndexOffset: 1000 }).addTo(map);
+  const se = L.marker([as, ae], { icon: mkIcon('se'), draggable: true, zIndexOffset: 1000 }).addTo(map);
+
+  function updateRectFromCorners() {
+    const swll = sw.getLatLng();
+    const nell = ne.getLatLng();
+    bboxFilterRect.setBounds(L.latLngBounds(swll, nell));
+    // Sync the other two corners
+    nw.setLatLng([nell.lat, swll.lng]);
+    se.setLatLng([swll.lat, nell.lng]);
+    // Update coordinate display
+    updateBboxDisplay(swll.lng, swll.lat, nell.lng, nell.lat);
+    // Style as active filter
+    bboxFilterRect.setStyle({ color: '#0066cc', fillOpacity: 0.15, dashArray: '5, 5' });
+  }
+
+  function updateBboxDisplay(w, s, e, n) {
+    const swEl = document.getElementById('bboxSW');
+    const neEl = document.getElementById('bboxNE');
+    if (swEl) swEl.textContent = `${w.toFixed(4)}, ${s.toFixed(4)}`;
+    if (neEl) neEl.textContent = `${e.toFixed(4)}, ${n.toFixed(4)}`;
+  }
+
+  function applyBboxFromCorners() {
+    const swll = sw.getLatLng();
+    const nell = ne.getLatLng();
+    const newBbox = [
+      Math.round(swll.lng * 10000) / 10000,
+      Math.round(swll.lat * 10000) / 10000,
+      Math.round(nell.lng * 10000) / 10000,
+      Math.round(nell.lat * 10000) / 10000
+    ];
+    // Check if bbox matches full extent (no filter needed)
+    const tolerance = 0.001;
+    const isFullExtent = Math.abs(newBbox[0] - west) < tolerance &&
+      Math.abs(newBbox[1] - south) < tolerance &&
+      Math.abs(newBbox[2] - east) < tolerance &&
+      Math.abs(newBbox[3] - north) < tolerance;
+    currentFilters.bbox = isFullExtent ? null : newBbox;
+    applyServerFiltersDebounced(true);
+  }
+
+  // Drag handlers for SW corner
+  sw.on('drag', () => {
+    const swll = sw.getLatLng();
+    const nell = ne.getLatLng();
+    // Clamp: SW must stay south-west of NE
+    if (swll.lat >= nell.lat) sw.setLatLng([nell.lat - 0.001, swll.lng]);
+    if (swll.lng >= nell.lng) sw.setLatLng([swll.lat, nell.lng - 0.001]);
+    updateRectFromCorners();
+  });
+  sw.on('dragend', applyBboxFromCorners);
+
+  // Drag handlers for NE corner
+  ne.on('drag', () => {
+    const swll = sw.getLatLng();
+    const nell = ne.getLatLng();
+    if (nell.lat <= swll.lat) ne.setLatLng([swll.lat + 0.001, nell.lng]);
+    if (nell.lng <= swll.lng) ne.setLatLng([nell.lat, swll.lng + 0.001]);
+    updateRectFromCorners();
+  });
+  ne.on('dragend', applyBboxFromCorners);
+
+  // Drag handlers for NW corner (moves N of SW and W of NE)
+  nw.on('drag', () => {
+    const nwll = nw.getLatLng();
+    const sell = se.getLatLng();
+    const nell = ne.getLatLng();
+    sw.setLatLng([sw.getLatLng().lat, nwll.lng]);
+    ne.setLatLng([nwll.lat, nell.lng]);
+    updateRectFromCorners();
+  });
+  nw.on('dragend', applyBboxFromCorners);
+
+  // Drag handlers for SE corner
+  se.on('drag', () => {
+    const sell = se.getLatLng();
+    const nwll = nw.getLatLng();
+    sw.setLatLng([sell.lat, sw.getLatLng().lng]);
+    ne.setLatLng([ne.getLatLng().lat, sell.lng]);
+    updateRectFromCorners();
+  });
+  se.on('dragend', applyBboxFromCorners);
+
+  // Make the rectangle itself draggable (click and drag the fill area to move the whole bbox)
+  let rectDragging = false;
+  let rectDragStart = null;
+  let cornerDragging = false;
+
+  [sw, ne, nw, se].forEach(m => {
+    m.on('dragstart', () => { cornerDragging = true; });
+    m.on('dragend', () => { setTimeout(() => { cornerDragging = false; }, 50); });
+  });
+
+  bboxFilterRect.on('mousedown', (e) => {
+    if (cornerDragging) return;
+    L.DomEvent.stopPropagation(e);
+    rectDragging = true;
+    rectDragStart = e.latlng;
+    map.dragging.disable();
+  });
+
+  map.on('mousemove', (e) => {
+    if (!rectDragging || !rectDragStart) return;
+    const dlat = e.latlng.lat - rectDragStart.lat;
+    const dlng = e.latlng.lng - rectDragStart.lng;
+    rectDragStart = e.latlng;
+    const swll = sw.getLatLng();
+    const nell = ne.getLatLng();
+    sw.setLatLng([swll.lat + dlat, swll.lng + dlng]);
+    ne.setLatLng([nell.lat + dlat, nell.lng + dlng]);
+    updateRectFromCorners();
+  });
+
+  map.on('mouseup', () => {
+    if (rectDragging) {
+      rectDragging = false;
+      rectDragStart = null;
+      map.dragging.enable();
+      applyBboxFromCorners();
+    }
+  });
+
+  bboxFilterMap = map;
 }
 
 // Apply server-side filters with debounce
@@ -638,7 +841,8 @@ async function loadCollection(collectionId, loadAll = false, pushHistory = true)
 
     renderItems();
   } catch (err) {
-    container.innerHTML = `<div class="error-msg">${err.message}</div>`;
+    console.error('Failed to load items:', err);
+    container.innerHTML = '<div class="error-msg">Unable to load items. Please try again later.</div>';
   }
 }
 
@@ -1128,9 +1332,10 @@ async function loadCollections(pushHistory = false) {
     const collectionsData = await collectionsRes.json();
     collections = collectionsData.collections || [];
 
-    // Compute overall date range from collection extents
+    // Compute overall date range and spatial extent from collection extents
     if (!dataDateMin || !dataDateMax) {
       let minDate = null, maxDate = null;
+      let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
       collections.forEach(c => {
         const interval = c.extent?.temporal?.interval?.[0];
         if (interval) {
@@ -1139,9 +1344,19 @@ async function loadCollections(pushHistory = false) {
           if (start && (!minDate || start < minDate)) minDate = start;
           if (end && (!maxDate || end > maxDate)) maxDate = end;
         }
+        const spatial = c.extent?.spatial?.bbox?.[0];
+        if (spatial && spatial.length >= 4) {
+          if (spatial[0] < west) west = spatial[0];
+          if (spatial[1] < south) south = spatial[1];
+          if (spatial[2] > east) east = spatial[2];
+          if (spatial[3] > north) north = spatial[3];
+        }
       });
       dataDateMin = minDate;
       dataDateMax = maxDate;
+      if (west !== Infinity) {
+        dataBboxExtent = [west, south, east, north];
+      }
     }
 
     // Build filter dropdown options from unfiltered items (first load only)
@@ -1218,7 +1433,8 @@ async function loadCollections(pushHistory = false) {
 
     renderCollections();
   } catch (err) {
-    document.getElementById('error').textContent = `Error loading data: ${err.message}. Make sure the STAC API is running.`;
+    console.error('Failed to load collections:', err);
+    document.getElementById('error').textContent = 'Unable to connect to the data server. Please try again later.';
     document.getElementById('error').style.display = 'block';
     container.innerHTML = '<div class="empty">Failed to load collections</div>';
   }
