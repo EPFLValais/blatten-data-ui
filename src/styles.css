@@ -316,6 +316,72 @@ a:hover {
   min-width: 0;
 }
 
+/* Search input with clear button */
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 150px;
+}
+
+.search-input-wrapper input[type="text"] {
+  width: 100%;
+  padding: 0.4rem 1.6rem 0.4rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.search-input-wrapper input[type="text"]:focus {
+  outline: none;
+  border-color: #0066cc;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #999;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.search-clear-btn:hover {
+  background: #e0e0e0;
+  color: #333;
+}
+
+/* Global clear filters button */
+.global-clear-filters-btn {
+  margin-left: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  color: #666;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  font-weight: normal;
+  vertical-align: middle;
+}
+
+.global-clear-filters-btn:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+
 .file-filters input[type="text"] {
   padding: 0.4rem 0.6rem;
   border: 1px solid #ccc;
@@ -1476,6 +1542,12 @@ a:hover {
 
   .filter-row {
     flex-wrap: wrap;
+  }
+
+  .filter-row .search-input-wrapper {
+    flex: 1;
+    min-width: 100px;
+    width: auto;
   }
 
   .filter-row input[type="text"],

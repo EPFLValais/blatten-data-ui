@@ -226,11 +226,21 @@ function updateBreadcrumb() {
 
   // Check if any advanced filters (date/bbox) are active
   const hasAdvancedFilters = currentFilters.dateFrom || currentFilters.dateTo || currentFilters.bbox;
+  const hasAnyFilter = currentFilters.search || currentFilters.sensor || currentFilters.source || currentFilters.processingLevel || hasAdvancedFilters;
+
+  // Update the global clear filters button visibility
+  const globalClearBtn = document.getElementById('globalClearFilters');
+  if (globalClearBtn) {
+    globalClearBtn.style.display = hasAnyFilter ? 'inline-block' : 'none';
+  }
 
   const filtersHtml = `
     <div class="filter-container">
       <div class="filter-row">
-        <input type="text" id="searchFilter" placeholder="Search..." value="${currentFilters.search}">
+        <div class="search-input-wrapper">
+          <input type="text" id="searchFilter" placeholder="Search..." value="${currentFilters.search}">
+          <button class="search-clear-btn" id="searchClearBtn" style="display: ${currentFilters.search ? 'flex' : 'none'};" title="Clear search">&times;</button>
+        </div>
         <select id="sensorFilter">
           <option value="">All Sensors</option>
           ${sensorOptions}
@@ -246,7 +256,6 @@ function updateBreadcrumb() {
         <button id="toggleAdvancedFilters" class="filter-toggle-btn ${hasAdvancedFilters ? 'active' : ''}" title="Date & Location Filters">
           <span class="filter-icon">⚙</span>
         </button>
-        ${hasAdvancedFilters ? '<button id="clearFilters" class="filter-clear-btn" title="Clear all filters">✕</button>' : ''}
       </div>
       <div class="filter-row-advanced" id="advancedFilters" style="display: ${hasAdvancedFilters ? 'flex' : 'none'};">
         ${dataDateMin && dataDateMax ? `
@@ -309,9 +318,23 @@ function updateBreadcrumb() {
   }
 
   // Attach filter event listeners
+  // Search clear button (x inside search input)
+  document.getElementById('searchClearBtn').addEventListener('click', () => {
+    currentFilters.search = '';
+    const searchInput = document.getElementById('searchFilter');
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.focus();
+    }
+    document.getElementById('searchClearBtn').style.display = 'none';
+    applyServerFiltersDebounced(true);
+  });
+
   // Text search - server-side, debounced
   document.getElementById('searchFilter').addEventListener('input', (e) => {
     currentFilters.search = e.target.value;
+    // Show/hide the clear button
+    document.getElementById('searchClearBtn').style.display = e.target.value ? 'flex' : 'none';
     applyServerFiltersDebounced();
   });
 
@@ -346,16 +369,17 @@ function updateBreadcrumb() {
     }
   });
 
-  // Clear filters button
-  const clearBtn = document.getElementById('clearFilters');
-  if (clearBtn) {
-    clearBtn.addEventListener('click', () => {
+  // Global clear filters button (in section header)
+  const globalClearEl = document.getElementById('globalClearFilters');
+  if (globalClearEl) {
+    globalClearEl.onclick = (e) => {
+      e.stopPropagation(); // Prevent toggling the Downloads panel
       currentFilters = {
         search: '', sensor: '', source: '', processingLevel: '',
         dateFrom: '', dateTo: '', bbox: null
       };
       applyServerFiltersDebounced(true);
-    });
+    };
   }
 
   // Date range slider - server-side, debounced
@@ -489,10 +513,26 @@ function buildFilterParams() {
 
 // Apply server-side filters (re-fetches data)
 async function applyServerFilters() {
+  // Save focus state before re-render
+  const searchInput = document.getElementById('searchFilter');
+  const wasSearchFocused = searchInput && document.activeElement === searchInput;
+  const cursorPosition = searchInput ? searchInput.selectionStart : 0;
+  const searchValue = currentFilters.search;
+
   if (currentCollection) {
     await loadCollection(currentCollection);
   } else {
     await loadCollections();
+  }
+
+  // Restore focus after re-render
+  if (wasSearchFocused) {
+    const newSearchInput = document.getElementById('searchFilter');
+    if (newSearchInput) {
+      newSearchInput.value = searchValue;
+      newSearchInput.focus();
+      newSearchInput.setSelectionRange(cursorPosition, cursorPosition);
+    }
   }
 }
 
@@ -524,13 +564,16 @@ function renderCollections() {
     });
   }
 
-  // Filter by search text
+  // Filter by search text (title/description match + cross-collection item search)
   if (currentFilters.search) {
     const searchLower = currentFilters.search.toLowerCase();
     filteredCollections = filteredCollections.filter(c => {
       const title = (c.title || c.id || '').toLowerCase();
       const description = (c.description || '').toLowerCase();
-      return title.includes(searchLower) || description.includes(searchLower);
+      const titleMatch = title.includes(searchLower) || description.includes(searchLower);
+      // Also include collections that have matching items (from search results)
+      const itemMatch = (c._searchMatchCount || 0) > 0;
+      return titleMatch || itemMatch;
     });
   }
 
@@ -543,6 +586,7 @@ function renderCollections() {
 
   container.innerHTML = filteredCollections.map(collection => {
     const itemCount = collection._itemCount || '';
+    const searchMatchCount = collection._searchMatchCount || 0;
     const temporal = collection.extent?.temporal?.interval?.[0];
     const dateRange = temporal ? formatDateRange(temporal[0], temporal[1]) : '';
 
@@ -551,6 +595,7 @@ function renderCollections() {
         <div class="file-row">
           <div class="file-name">
             <span class="name">${collection.title || collection.id}</span>
+            ${searchMatchCount > 0 ? `<span class="file-count-badge">${searchMatchCount} match${searchMatchCount !== 1 ? 'es' : ''}</span>` : ''}
           </div>
           <div class="file-info">
             <span class="collection-date">${dateRange}</span>
@@ -775,7 +820,6 @@ function renderItems() {
             <span>${formatSize(totalSize)}</span>
             <span>${dateDisplay}</span>
           </div>
-          ${archiveAsset ? `<a href="${archiveHref}" class="download-btn" target="_blank" rel="noopener" title="Download Archive">⬇</a>` : ''}
         </div>
         <div class="file-meta" id="${metaId}">
           <div class="meta-content-wrapper">
@@ -1146,6 +1190,29 @@ async function loadCollections(pushHistory = false) {
           if (!processingLevelsByCollection[collectionId].includes(levelStr)) processingLevelsByCollection[collectionId].push(levelStr);
         }
       });
+    }
+
+    // Cross-collection item search: when search text is active, find collections with matching items
+    collections.forEach(c => { c._searchMatchCount = 0; });
+    if (currentFilters.search) {
+      try {
+        const searchParams = new URLSearchParams();
+        searchParams.set('q', currentFilters.search);
+        searchParams.set('exclude_assets', 'true');
+        searchParams.set('limit', '200');
+        const searchRes = await fetch(`${STAC_API}/search?${searchParams}`);
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          const matchCounts = {};
+          (searchData.features || []).forEach(item => {
+            const cid = item.collection;
+            if (cid) matchCounts[cid] = (matchCounts[cid] || 0) + 1;
+          });
+          collections.forEach(c => {
+            c._searchMatchCount = matchCounts[c.id] || 0;
+          });
+        }
+      } catch (_) { /* ignore search errors */ }
     }
 
     // Sort collections by title
