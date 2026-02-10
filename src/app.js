@@ -239,11 +239,12 @@ function updateBreadcrumb() {
   const bboxIsFiltered = !!currentFilters.bbox;
 
   breadcrumb.innerHTML = `
-    <div class="file-nav-title">
-      ${titleHtml}
-    </div>
-    <div class="file-filters">
-      <div class="filter-controls-left">
+    <div class="filter-layout">
+      <div class="filter-layout-left">
+        <div class="file-nav-title">
+          ${titleHtml}
+          <button id="clearAllFilters" class="clear-all-filters-btn ${hasAnyFilter ? 'active' : ''}" ${hasAnyFilter ? '' : 'disabled'}>Clear</button>
+        </div>
         <div class="filter-row">
           <div class="search-input-wrapper">
             <input type="text" id="searchFilter" placeholder="Search..." value="${currentFilters.search}">
@@ -261,7 +262,6 @@ function updateBreadcrumb() {
             <option value="">All Levels</option>
             ${processingLevelOptions}
           </select>
-          <button id="clearAllFilters" class="clear-all-filters-btn" ${hasAnyFilter ? '' : 'disabled'}>Clear</button>
         </div>
         ${dataDateMin && dataDateMax ? `
         <div class="filter-group filter-group-date-range">
@@ -281,7 +281,7 @@ function updateBreadcrumb() {
       </div>
       <div class="filter-controls-right">
         <div id="bboxMapContainer" class="bbox-map-container"></div>
-        <div class="bbox-coords-display">
+        <div class="bbox-coords-display" id="bboxCoordsDisplay">
           <span class="bbox-coord-label">SW</span>
           <span id="bboxSW" class="bbox-coord-val">${bboxDisplay ? `${bboxDisplay[0].toFixed(4)}, ${bboxDisplay[1].toFixed(4)}` : '-'}</span>
           <span class="bbox-coord-label">NE</span>
@@ -289,16 +289,14 @@ function updateBreadcrumb() {
           <button id="bboxEditToggle" class="bbox-edit-toggle-btn" title="Edit coordinates">&#9998;</button>
           ${bboxIsFiltered ? '<button id="bboxReset" class="bbox-reset-btn" title="Reset to full extent">&times;</button>' : ''}
         </div>
-        <div id="bboxEditPanel" class="bbox-edit-panel" style="display: none;">
-          <div class="bbox-edit-row">
-            <label>West</label><input type="number" id="bboxEditW" step="0.0001" value="${bboxDisplay ? bboxDisplay[0].toFixed(4) : ''}">
-            <label>South</label><input type="number" id="bboxEditS" step="0.0001" value="${bboxDisplay ? bboxDisplay[1].toFixed(4) : ''}">
+        <div class="bbox-coords-edit" id="bboxCoordsEdit" style="display: none;">
+          <div class="bbox-edit-grid">
+            <label>W</label><input type="number" id="bboxEditW" class="bbox-coord-input" step="0.0001" value="${bboxDisplay ? bboxDisplay[0].toFixed(4) : ''}"><span></span><label>S</label><input type="number" id="bboxEditS" class="bbox-coord-input" step="0.0001" value="${bboxDisplay ? bboxDisplay[1].toFixed(4) : ''}">
+            <label>E</label><input type="number" id="bboxEditE" class="bbox-coord-input" step="0.0001" value="${bboxDisplay ? bboxDisplay[2].toFixed(4) : ''}"><span></span><label>N</label><input type="number" id="bboxEditN" class="bbox-coord-input" step="0.0001" value="${bboxDisplay ? bboxDisplay[3].toFixed(4) : ''}">
           </div>
-          <div class="bbox-edit-row">
-            <label>East</label><input type="number" id="bboxEditE" step="0.0001" value="${bboxDisplay ? bboxDisplay[2].toFixed(4) : ''}">
-            <label>North</label><input type="number" id="bboxEditN" step="0.0001" value="${bboxDisplay ? bboxDisplay[3].toFixed(4) : ''}">
+          <div class="bbox-edit-actions">
+            <button id="bboxEditClose" class="bbox-edit-close-btn" title="Back">&#8617;</button>
           </div>
-          <button id="bboxEditApply" class="bbox-edit-apply-btn">Apply</button>
         </div>
       </div>
     </div>
@@ -414,32 +412,60 @@ function updateBreadcrumb() {
     });
   }
 
-  // Bbox edit toggle button
-  const bboxEditToggle = document.getElementById('bboxEditToggle');
-  const bboxEditPanel = document.getElementById('bboxEditPanel');
-  if (bboxEditToggle && bboxEditPanel) {
-    bboxEditToggle.addEventListener('click', () => {
-      const isVisible = bboxEditPanel.style.display !== 'none';
-      bboxEditPanel.style.display = isVisible ? 'none' : 'flex';
-      bboxEditToggle.classList.toggle('active', !isVisible);
-    });
+  // Bbox edit: toggle between static display and inline inputs
+  const bboxCoordsDisplay = document.getElementById('bboxCoordsDisplay');
+  const bboxCoordsEdit = document.getElementById('bboxCoordsEdit');
+
+  function showBboxEditMode() {
+    if (bboxCoordsDisplay) bboxCoordsDisplay.style.display = 'none';
+    if (bboxCoordsEdit) bboxCoordsEdit.style.display = 'flex';
   }
 
-  // Bbox edit apply button
-  const bboxEditApply = document.getElementById('bboxEditApply');
-  if (bboxEditApply) {
-    bboxEditApply.addEventListener('click', () => {
-      const w = parseFloat(document.getElementById('bboxEditW').value);
-      const s = parseFloat(document.getElementById('bboxEditS').value);
-      const e = parseFloat(document.getElementById('bboxEditE').value);
-      const n = parseFloat(document.getElementById('bboxEditN').value);
-      if (!isNaN(w) && !isNaN(s) && !isNaN(e) && !isNaN(n) && w < e && s < n) {
-        currentFilters.bbox = [w, s, e, n];
-        bboxEditPanel.style.display = 'none';
-        applyServerFiltersDebounced(true);
-      }
-    });
+  function hideBboxEditMode() {
+    if (bboxCoordsDisplay) bboxCoordsDisplay.style.display = 'flex';
+    if (bboxCoordsEdit) bboxCoordsEdit.style.display = 'none';
   }
+
+  const bboxEditToggle = document.getElementById('bboxEditToggle');
+  if (bboxEditToggle) {
+    bboxEditToggle.addEventListener('click', showBboxEditMode);
+  }
+
+  const bboxEditClose = document.getElementById('bboxEditClose');
+  if (bboxEditClose) {
+    bboxEditClose.addEventListener('click', hideBboxEditMode);
+  }
+
+  // Live-update polygon and apply filter as user types in edit inputs
+  let bboxInputTimer = null;
+  function updateMapFromInputs() {
+    const w = parseFloat(document.getElementById('bboxEditW')?.value);
+    const s = parseFloat(document.getElementById('bboxEditS')?.value);
+    const e = parseFloat(document.getElementById('bboxEditE')?.value);
+    const n = parseFloat(document.getElementById('bboxEditN')?.value);
+    if (isNaN(w) || isNaN(s) || isNaN(e) || isNaN(n) || w >= e || s >= n) return;
+    // Update rectangle and corner markers on the map
+    if (bboxFilterRect) {
+      bboxFilterRect.setBounds([[s, w], [n, e]]);
+      bboxFilterRect.setStyle({ color: '#0066cc', fillOpacity: 0.15, dashArray: '5, 5' });
+    }
+    // Update static display text
+    const swEl = document.getElementById('bboxSW');
+    const neEl = document.getElementById('bboxNE');
+    if (swEl) swEl.textContent = `${w.toFixed(4)}, ${s.toFixed(4)}`;
+    if (neEl) neEl.textContent = `${e.toFixed(4)}, ${n.toFixed(4)}`;
+    // Debounced filter apply
+    clearTimeout(bboxInputTimer);
+    bboxInputTimer = setTimeout(() => {
+      currentFilters.bbox = [w, s, e, n];
+      applyServerFiltersDebounced(true);
+    }, 500);
+  }
+
+  ['bboxEditW', 'bboxEditS', 'bboxEditE', 'bboxEditN'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateMapFromInputs);
+  });
 }
 
 // Initialize or update the bbox filter map
@@ -472,7 +498,7 @@ function initBboxFilterMap() {
     maxZoom: 19
   }).addTo(map);
 
-  map.fitBounds(fullBounds, { padding: [15, 15] });
+  map.fitBounds(fullBounds, { padding: [5, 5] });
 
   // Draw the editable rectangle (always visible)
   const rectStyle = {
@@ -508,6 +534,15 @@ function initBboxFilterMap() {
     const neEl = document.getElementById('bboxNE');
     if (swEl) swEl.textContent = `${w.toFixed(4)}, ${s.toFixed(4)}`;
     if (neEl) neEl.textContent = `${e.toFixed(4)}, ${n.toFixed(4)}`;
+    // Also update edit inputs if they exist
+    const wEl = document.getElementById('bboxEditW');
+    const sEl = document.getElementById('bboxEditS');
+    const eEl = document.getElementById('bboxEditE');
+    const nEl = document.getElementById('bboxEditN');
+    if (wEl) wEl.value = w.toFixed(4);
+    if (sEl) sEl.value = s.toFixed(4);
+    if (eEl) eEl.value = e.toFixed(4);
+    if (nEl) nEl.value = n.toFixed(4);
   }
 
   function applyBboxFromCorners() {
