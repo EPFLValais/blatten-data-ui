@@ -110,10 +110,7 @@ window.addEventListener('popstate', (event) => {
     // Go back to collections list without pushing new history
     currentCollection = null;
     currentExpandedItem = null;
-    currentFilters = {
-      search: '', sensor: '', source: '', processingLevel: '',
-      dateFrom: '', dateTo: '', bbox: null
-    };
+    // Preserve current filters when navigating back
     loadCollections(false);
   }
 });
@@ -228,12 +225,6 @@ function updateBreadcrumb() {
   const hasAdvancedFilters = currentFilters.dateFrom || currentFilters.dateTo || currentFilters.bbox;
   const hasAnyFilter = currentFilters.search || currentFilters.sensor || currentFilters.source || currentFilters.processingLevel || hasAdvancedFilters;
 
-  // Update the global clear filters button visibility
-  const globalClearBtn = document.getElementById('globalClearFilters');
-  if (globalClearBtn) {
-    globalClearBtn.style.display = hasAnyFilter ? 'inline-block' : 'none';
-  }
-
   const filtersHtml = `
     <div class="filter-container">
       <div class="filter-row">
@@ -253,11 +244,9 @@ function updateBreadcrumb() {
           <option value="">All Levels</option>
           ${processingLevelOptions}
         </select>
-        <button id="toggleAdvancedFilters" class="filter-toggle-btn ${hasAdvancedFilters ? 'active' : ''}" title="Date & Location Filters">
-          <span class="filter-icon">⚙</span>
-        </button>
+        <button id="clearAllFilters" class="clear-all-filters-btn" ${hasAnyFilter ? '' : 'disabled'}>Clear Filters</button>
       </div>
-      <div class="filter-row-advanced" id="advancedFilters" style="display: ${hasAdvancedFilters ? 'flex' : 'none'};">
+      <div class="filter-row-advanced" id="advancedFilters" style="display: flex;">
         ${dataDateMin && dataDateMax ? `
         <div class="filter-group filter-group-date-range">
           <label>Date Range</label>
@@ -287,9 +276,10 @@ function updateBreadcrumb() {
   `;
 
   if (!currentCollection) {
-    // Show just filters on collections view
     breadcrumb.innerHTML = `
-      <span>All Collections</span>
+      <div class="file-nav-title">
+        <span>All Collections</span>
+      </div>
       <div class="file-filters">${filtersHtml}</div>
     `;
   } else {
@@ -297,23 +287,21 @@ function updateBreadcrumb() {
     const title = collection?.title || currentCollection;
 
     breadcrumb.innerHTML = `
-      <a href="#" id="backToCollections">&larr; All Collections</a>
-      <span>/</span>
-      <span>${title}</span>
+      <div class="file-nav-title">
+        <a href="#" id="backToCollections">&larr; All Collections</a>
+        <span class="file-nav-sep">/</span>
+        <span class="file-nav-collection">${title}</span>
+      </div>
       <div class="file-filters">${filtersHtml}</div>
     `;
 
     document.getElementById('backToCollections').addEventListener('click', (e) => {
       e.preventDefault();
-      // Push history state before changing currentCollection
       pushHistoryState(null, null);
       currentCollection = null;
       currentExpandedItem = null;
-      currentFilters = {
-        search: '', sensor: '', source: '', processingLevel: '',
-        dateFrom: '', dateTo: '', bbox: null
-      };
-      loadCollections(false); // Don't push history again
+      // Preserve current filters when navigating back
+      loadCollections(false);
     });
   }
 
@@ -356,31 +344,14 @@ function updateBreadcrumb() {
     applyServerFiltersDebounced(true);
   });
 
-  // Toggle advanced filters
-  document.getElementById('toggleAdvancedFilters').addEventListener('click', () => {
-    const advanced = document.getElementById('advancedFilters');
-    const btn = document.getElementById('toggleAdvancedFilters');
-    if (advanced.style.display === 'none') {
-      advanced.style.display = 'flex';
-      btn.classList.add('active');
-    } else {
-      advanced.style.display = 'none';
-      btn.classList.remove('active');
-    }
-  });
-
-  // Global clear filters button (in section header)
-  const globalClearEl = document.getElementById('globalClearFilters');
-  if (globalClearEl) {
-    globalClearEl.onclick = (e) => {
-      e.stopPropagation(); // Prevent toggling the Downloads panel
-      currentFilters = {
-        search: '', sensor: '', source: '', processingLevel: '',
-        dateFrom: '', dateTo: '', bbox: null
-      };
-      applyServerFiltersDebounced(true);
+  // Inline clear all filters button
+  document.getElementById('clearAllFilters').addEventListener('click', () => {
+    currentFilters = {
+      search: '', sensor: '', source: '', processingLevel: '',
+      dateFrom: '', dateTo: '', bbox: null
     };
-  }
+    applyServerFiltersDebounced(true);
+  });
 
   // Date range slider - server-side, debounced
   const dateFromSlider = document.getElementById('dateFromSlider');
@@ -564,6 +535,34 @@ function renderCollections() {
     });
   }
 
+  // Filter by date range (check overlap with collection temporal extent)
+  if (currentFilters.dateFrom || currentFilters.dateTo) {
+    const filterFrom = currentFilters.dateFrom ? new Date(currentFilters.dateFrom) : null;
+    const filterTo = currentFilters.dateTo ? new Date(currentFilters.dateTo) : null;
+    filteredCollections = filteredCollections.filter(c => {
+      const interval = c.extent?.temporal?.interval?.[0];
+      if (!interval) return false;
+      const collStart = interval[0] ? new Date(interval[0]) : null;
+      const collEnd = interval[1] ? new Date(interval[1]) : null;
+      // Overlap check: exclude if filter ends before collection starts, or collection ends before filter starts
+      if (filterTo && collStart && filterTo < collStart) return false;
+      if (filterFrom && collEnd && collEnd < filterFrom) return false;
+      return true;
+    });
+  }
+
+  // Filter by bbox (check overlap with collection spatial extent)
+  if (currentFilters.bbox?.length === 4) {
+    const [fWest, fSouth, fEast, fNorth] = currentFilters.bbox;
+    filteredCollections = filteredCollections.filter(c => {
+      const spatial = c.extent?.spatial?.bbox?.[0];
+      if (!spatial || spatial.length < 4) return false;
+      const [cWest, cSouth, cEast, cNorth] = spatial;
+      // No overlap if filter is entirely outside collection
+      return !(cEast < fWest || cWest > fEast || cNorth < fSouth || cSouth > fNorth);
+    });
+  }
+
   // Filter by search text (title/description match + cross-collection item search)
   if (currentFilters.search) {
     const searchLower = currentFilters.search.toLowerCase();
@@ -601,7 +600,6 @@ function renderCollections() {
             <span class="collection-date">${dateRange}</span>
           </div>
         </div>
-        <div class="collection-description">${collection.description || ''}</div>
       </div>
     `;
   }).join('');
@@ -796,7 +794,7 @@ function renderItems() {
     const processingLevel = props['blatten:processing_level'];
     const frequency = props['blatten:frequency'] || '';
     const description = props.description || '';
-    const continued = props['blatten:continued'];
+    const additionalInfo = props['blatten:additional_info'] || '';
     const phase = props['blatten:phase'] || '';
     const fileCount = props['blatten:file_count'] || fileAssets.length;
 
@@ -829,7 +827,7 @@ function renderItems() {
               ${processingLevel ? `<div class="meta-row"><span class="meta-label">Processing Level</span><span class="meta-value">${processingLevel}</span></div>` : ''}
               ${phase ? `<div class="meta-row"><span class="meta-label">Phase</span><span class="meta-value">${phase}</span></div>` : ''}
               ${frequency ? `<div class="meta-row"><span class="meta-label">Frequency</span><span class="meta-value">${frequency}</span></div>` : ''}
-              ${continued !== undefined ? `<div class="meta-row"><span class="meta-label">Status</span><span class="meta-value">${continued ? 'Ongoing' : 'Completed'}</span></div>` : ''}
+              ${additionalInfo ? `<div class="meta-row"><span class="meta-label">Additional Info</span><span class="meta-value">${additionalInfo}</span></div>` : ''}
               ${format ? `<div class="meta-row"><span class="meta-label">Format</span><span class="meta-value">${format}</span></div>` : ''}
             </div>
             ${item.bbox ? `
