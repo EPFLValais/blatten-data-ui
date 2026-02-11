@@ -1,6 +1,5 @@
 // STAC API-based file browser
 const STAC_API = '/stac';
-const INITIAL_ITEMS_LIMIT = 10;
 let collections = [];
 let currentCollection = null;
 let items = [];
@@ -27,6 +26,10 @@ let bboxFilterRect = null; // Current bbox rectangle on the map
 let filterDebounceTimer = null;
 let serverFilterDebounceTimer = null;
 let currentExpandedItem = null; // Track currently expanded item for history
+let bboxOverlayLayers = {};    // Maps collection/item id → Leaflet rectangle for cross-highlighting
+let bboxOverlayGroup = null;   // Leaflet layer group for overlays (rendered below filter rect)
+let bboxCornerMarkers = null;  // { sw, ne, nw, se } draggable corner markers
+let bboxMapRight = null;       // Persistent right-column DOM element (survives re-renders)
 
 // History API integration for back button navigation
 function pushHistoryState(collectionId = null, expandedItem = null) {
@@ -279,28 +282,43 @@ function updateBreadcrumb() {
         </div>
         ` : ''}
       </div>
-      <div class="filter-controls-right">
-        <div id="bboxMapContainer" class="bbox-map-container"></div>
-        <div class="bbox-coords-display" id="bboxCoordsDisplay">
-          <span class="bbox-coord-label">SW</span>
-          <span id="bboxSW" class="bbox-coord-val">${bboxDisplay ? `${bboxDisplay[0].toFixed(4)}, ${bboxDisplay[1].toFixed(4)}` : '-'}</span>
-          <span class="bbox-coord-label">NE</span>
-          <span id="bboxNE" class="bbox-coord-val">${bboxDisplay ? `${bboxDisplay[2].toFixed(4)}, ${bboxDisplay[3].toFixed(4)}` : '-'}</span>
-          <button id="bboxEditToggle" class="bbox-edit-toggle-btn" title="Edit coordinates">&#9998;</button>
-          ${bboxIsFiltered ? '<button id="bboxReset" class="bbox-reset-btn" title="Reset to full extent">&times;</button>' : ''}
-        </div>
-        <div class="bbox-coords-edit" id="bboxCoordsEdit" style="display: none;">
-          <div class="bbox-edit-grid">
-            <label>W</label><input type="number" id="bboxEditW" class="bbox-coord-input" step="0.0001" value="${bboxDisplay ? bboxDisplay[0].toFixed(4) : ''}"><span></span><label>S</label><input type="number" id="bboxEditS" class="bbox-coord-input" step="0.0001" value="${bboxDisplay ? bboxDisplay[1].toFixed(4) : ''}">
-            <label>E</label><input type="number" id="bboxEditE" class="bbox-coord-input" step="0.0001" value="${bboxDisplay ? bboxDisplay[2].toFixed(4) : ''}"><span></span><label>N</label><input type="number" id="bboxEditN" class="bbox-coord-input" step="0.0001" value="${bboxDisplay ? bboxDisplay[3].toFixed(4) : ''}">
-          </div>
-          <div class="bbox-edit-actions">
-            <button id="bboxEditClose" class="bbox-edit-close-btn" title="Back">&#8617;</button>
-          </div>
-        </div>
-      </div>
     </div>
   `;
+
+  // Create the persistent right column (map + coords) once, reuse on re-renders
+  if (!bboxMapRight) {
+    bboxMapRight = document.createElement('div');
+    bboxMapRight.className = 'filter-controls-right';
+    bboxMapRight.innerHTML = `
+      <div id="bboxMapContainer" class="bbox-map-container"></div>
+      <div class="bbox-coords-display" id="bboxCoordsDisplay">
+        <span class="bbox-coord-label">SW</span>
+        <span id="bboxSW" class="bbox-coord-val">-</span>
+        <span class="bbox-coord-label">NE</span>
+        <span id="bboxNE" class="bbox-coord-val">-</span>
+        <button id="bboxEditToggle" class="bbox-edit-toggle-btn" title="Edit coordinates">&#9998;</button>
+        <button id="bboxReset" class="bbox-reset-btn" title="Reset to full extent" style="display:none">&times;</button>
+      </div>
+      <div class="bbox-coords-edit" id="bboxCoordsEdit" style="display: none;">
+        <div class="bbox-edit-grid">
+          <label>W</label><input type="number" id="bboxEditW" class="bbox-coord-input" step="0.0001"><span></span><label>S</label><input type="number" id="bboxEditS" class="bbox-coord-input" step="0.0001">
+          <label>E</label><input type="number" id="bboxEditE" class="bbox-coord-input" step="0.0001"><span></span><label>N</label><input type="number" id="bboxEditN" class="bbox-coord-input" step="0.0001">
+        </div>
+        <div class="bbox-edit-actions">
+          <button id="bboxEditClose" class="bbox-edit-close-btn" title="Back">&#8617;</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Append persistent right column into the filter layout
+  const filterLayout = breadcrumb.querySelector('.filter-layout');
+  if (filterLayout) filterLayout.appendChild(bboxMapRight);
+
+  // Update coord display and reset button visibility
+  updateBboxCoordsDisplay();
+  const resetBtn = document.getElementById('bboxReset');
+  if (resetBtn) resetBtn.style.display = bboxIsFiltered ? '' : 'none';
 
   // Back button (only exists in collection view)
   const backBtn = document.getElementById('backToCollections');
@@ -400,43 +418,53 @@ function updateBreadcrumb() {
     dateToSlider.addEventListener('input', onSliderInput);
   }
 
-  // Bbox map - interactive area filter
-  initBboxFilterMap();
-
-  // Bbox reset button
-  const bboxResetBtn = document.getElementById('bboxReset');
-  if (bboxResetBtn) {
-    bboxResetBtn.addEventListener('click', () => {
-      currentFilters.bbox = null;
-      applyServerFiltersDebounced(true);
-    });
+  // Initialize the bbox map if it doesn't exist yet; otherwise just refresh overlays
+  if (!bboxFilterMap) {
+    initBboxFilterMap();
+    initBboxControls();
+  } else {
+    updateBboxOverlays();
   }
+}
 
-  // Bbox edit: toggle between static display and inline inputs
+// Update the bbox coordinate display and edit inputs from current filter state
+function updateBboxCoordsDisplay() {
+  const bbox = currentFilters.bbox || dataBboxExtent;
+  if (!bbox) return;
+  const swEl = document.getElementById('bboxSW');
+  const neEl = document.getElementById('bboxNE');
+  if (swEl) swEl.textContent = `${bbox[0].toFixed(4)}, ${bbox[1].toFixed(4)}`;
+  if (neEl) neEl.textContent = `${bbox[2].toFixed(4)}, ${bbox[3].toFixed(4)}`;
+  const wEl = document.getElementById('bboxEditW');
+  const sEl = document.getElementById('bboxEditS');
+  const eEl = document.getElementById('bboxEditE');
+  const nEl = document.getElementById('bboxEditN');
+  if (wEl) wEl.value = bbox[0].toFixed(4);
+  if (sEl) sEl.value = bbox[1].toFixed(4);
+  if (eEl) eEl.value = bbox[2].toFixed(4);
+  if (nEl) nEl.value = bbox[3].toFixed(4);
+}
+
+// Attach event listeners to persistent bbox controls (called once)
+function initBboxControls() {
+  document.getElementById('bboxReset')?.addEventListener('click', () => {
+    currentFilters.bbox = null;
+    applyServerFiltersDebounced(true);
+  });
+
   const bboxCoordsDisplay = document.getElementById('bboxCoordsDisplay');
   const bboxCoordsEdit = document.getElementById('bboxCoordsEdit');
 
-  function showBboxEditMode() {
+  document.getElementById('bboxEditToggle')?.addEventListener('click', () => {
     if (bboxCoordsDisplay) bboxCoordsDisplay.style.display = 'none';
     if (bboxCoordsEdit) bboxCoordsEdit.style.display = 'flex';
-  }
+  });
 
-  function hideBboxEditMode() {
+  document.getElementById('bboxEditClose')?.addEventListener('click', () => {
     if (bboxCoordsDisplay) bboxCoordsDisplay.style.display = 'flex';
     if (bboxCoordsEdit) bboxCoordsEdit.style.display = 'none';
-  }
+  });
 
-  const bboxEditToggle = document.getElementById('bboxEditToggle');
-  if (bboxEditToggle) {
-    bboxEditToggle.addEventListener('click', showBboxEditMode);
-  }
-
-  const bboxEditClose = document.getElementById('bboxEditClose');
-  if (bboxEditClose) {
-    bboxEditClose.addEventListener('click', hideBboxEditMode);
-  }
-
-  // Live-update polygon and apply filter as user types in edit inputs
   let bboxInputTimer = null;
   function updateMapFromInputs() {
     const w = parseFloat(document.getElementById('bboxEditW')?.value);
@@ -444,17 +472,14 @@ function updateBreadcrumb() {
     const e = parseFloat(document.getElementById('bboxEditE')?.value);
     const n = parseFloat(document.getElementById('bboxEditN')?.value);
     if (isNaN(w) || isNaN(s) || isNaN(e) || isNaN(n) || w >= e || s >= n) return;
-    // Update rectangle and corner markers on the map
     if (bboxFilterRect) {
       bboxFilterRect.setBounds([[s, w], [n, e]]);
       bboxFilterRect.setStyle({ color: '#0066cc', fillOpacity: 0.15, dashArray: '5, 5' });
     }
-    // Update static display text
     const swEl = document.getElementById('bboxSW');
     const neEl = document.getElementById('bboxNE');
     if (swEl) swEl.textContent = `${w.toFixed(4)}, ${s.toFixed(4)}`;
     if (neEl) neEl.textContent = `${e.toFixed(4)}, ${n.toFixed(4)}`;
-    // Debounced filter apply
     clearTimeout(bboxInputTimer);
     bboxInputTimer = setTimeout(() => {
       currentFilters.bbox = [w, s, e, n];
@@ -463,28 +488,19 @@ function updateBreadcrumb() {
   }
 
   ['bboxEditW', 'bboxEditS', 'bboxEditE', 'bboxEditN'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('input', updateMapFromInputs);
+    document.getElementById(id)?.addEventListener('input', updateMapFromInputs);
   });
 }
 
-// Initialize or update the bbox filter map
+// Initialize the bbox filter map (called once)
 function initBboxFilterMap() {
   const container = document.getElementById('bboxMapContainer');
   if (!container || !dataBboxExtent) return;
 
-  // Destroy previous map instance if it exists
-  if (bboxFilterMap) {
-    bboxFilterMap.remove();
-    bboxFilterMap = null;
-    bboxFilterRect = null;
-  }
-
   const [west, south, east, north] = dataBboxExtent;
-  const fullBounds = L.latLngBounds([south, west], [north, east]);
+  const paddedInit = padBbox(dataBboxExtent);
 
-  // Use current filter bbox or full extent
-  const activeBbox = currentFilters.bbox || dataBboxExtent;
+  const activeBbox = currentFilters.bbox || paddedInit;
   const [aw, as, ae, an] = activeBbox;
 
   const map = L.map(container, {
@@ -498,7 +514,62 @@ function initBboxFilterMap() {
     maxZoom: 19
   }).addTo(map);
 
-  map.fitBounds(fullBounds, { padding: [5, 5] });
+  map.fitBounds([[paddedInit[1], paddedInit[0]], [paddedInit[3], paddedInit[2]]], { padding: [5, 5] });
+
+  // Draw collection/item bbox overlays (layer group sits below the filter rect)
+  bboxOverlayGroup = L.layerGroup().addTo(map);
+  addBboxOverlays(map);
+
+  // Zoom-to-extent control
+  const ZoomExtentControl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'bbox-map-zoom-extent-btn');
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 5.5L1 1m0 0h3m-3 0v3m7.5 1.5L13 1m0 0h-3m3 0v3M5.5 8.5L1 13m0 0h3m-3 0v-3m7.5-1.5L13 13m0 0h-3m3 0v-3"/></svg>';
+      btn.title = 'Zoom to extent';
+      L.DomEvent.disableClickPropagation(btn);
+      btn.addEventListener('click', () => {
+        const extent = padBbox(computeOverlayExtent() || dataBboxExtent);
+        if (extent) {
+          const [w, s, e, n] = extent;
+          map.fitBounds([[s, w], [n, e]], { padding: [5, 5], animate: true });
+        }
+      });
+      return btn;
+    }
+  });
+  map.addControl(new ZoomExtentControl());
+
+  // Expand/collapse map height control
+  const ExpandHeightControl = L.Control.extend({
+    options: { position: 'bottomright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'bbox-map-expand-height-btn');
+      const chevDown = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l4 4 4-4"/></svg>';
+      const chevUp = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l4-4 4 4"/></svg>';
+      btn.innerHTML = chevDown;
+      btn.title = 'Expand map';
+      L.DomEvent.disableClickPropagation(btn);
+      btn.addEventListener('click', () => {
+        const tall = container.classList.toggle('bbox-map-tall');
+        btn.innerHTML = tall ? chevUp : chevDown;
+        btn.title = tall ? 'Collapse map' : 'Expand map';
+        // Invalidate map size after CSS transition, then fit to extent on collapse
+        setTimeout(() => {
+          map.invalidateSize();
+          if (!tall) {
+            const extent = padBbox(computeOverlayExtent() || dataBboxExtent);
+            if (extent) {
+              const [w, s, e, n] = extent;
+              map.fitBounds([[s, w], [n, e]], { padding: [5, 5], animate: true });
+            }
+          }
+        }, 220);
+      });
+      return btn;
+    }
+  });
+  map.addControl(new ExpandHeightControl());
 
   // Draw the editable rectangle (always visible)
   const rectStyle = {
@@ -515,6 +586,7 @@ function initBboxFilterMap() {
   const ne = L.marker([an, ae], { icon: mkIcon('ne'), draggable: true, zIndexOffset: 1000 }).addTo(map);
   const nw = L.marker([an, aw], { icon: mkIcon('nw'), draggable: true, zIndexOffset: 1000 }).addTo(map);
   const se = L.marker([as, ae], { icon: mkIcon('se'), draggable: true, zIndexOffset: 1000 }).addTo(map);
+  bboxCornerMarkers = { sw, ne, nw, se };
 
   function updateRectFromCorners() {
     const swll = sw.getLatLng();
@@ -646,6 +718,156 @@ function initBboxFilterMap() {
   });
 
   bboxFilterMap = map;
+}
+
+// Pad a bbox [w, s, e, n] by a fraction of its size on each side (default 5%)
+function padBbox(bbox, fraction = 0.15) {
+  const [w, s, e, n] = bbox;
+  const dw = (e - w) * fraction;
+  const dh = (n - s) * fraction;
+  return [w - dw, s - dh, e + dw, n + dh];
+}
+
+// Compute the combined extent [w, s, e, n] of all current overlay bboxes
+function computeOverlayExtent() {
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+  let count = 0;
+  if (!currentCollection) {
+    for (const col of collections) {
+      const bbox = col.extent?.spatial?.bbox?.[0];
+      if (!bbox || bbox.length < 4) continue;
+      w = Math.min(w, bbox[0]); s = Math.min(s, bbox[1]);
+      e = Math.max(e, bbox[2]); n = Math.max(n, bbox[3]);
+      count++;
+    }
+  } else {
+    for (const item of items) {
+      const bbox = item.bbox;
+      if (!bbox || bbox.length < 4) continue;
+      w = Math.min(w, bbox[0]); s = Math.min(s, bbox[1]);
+      e = Math.max(e, bbox[2]); n = Math.max(n, bbox[3]);
+      count++;
+    }
+  }
+  return count > 0 ? [w, s, e, n] : null;
+}
+
+// Reset the filter rect bounds and corner marker positions to match current state.
+// viewExtent is the default extent when no bbox filter is active (e.g. item-level extent).
+function resetBboxRect(viewExtent) {
+  if (!bboxFilterRect || !bboxCornerMarkers || !dataBboxExtent) return;
+  const fallback = padBbox(viewExtent || dataBboxExtent);
+  const bbox = currentFilters.bbox || fallback;
+  const [w, s, e, n] = bbox;
+  bboxFilterRect.setBounds([[s, w], [n, e]]);
+  bboxFilterRect.setStyle({
+    color: currentFilters.bbox ? '#0066cc' : '#666',
+    fillOpacity: currentFilters.bbox ? 0.15 : 0.05,
+    dashArray: currentFilters.bbox ? '5, 5' : '3, 3'
+  });
+  bboxCornerMarkers.sw.setLatLng([s, w]);
+  bboxCornerMarkers.ne.setLatLng([n, e]);
+  bboxCornerMarkers.nw.setLatLng([n, w]);
+  bboxCornerMarkers.se.setLatLng([s, e]);
+}
+
+// Refresh overlays on the existing map (called when data changes but map persists)
+function updateBboxOverlays() {
+  if (!bboxFilterMap) return;
+  // Clear old overlays from the dedicated layer group
+  if (bboxOverlayGroup) bboxOverlayGroup.clearLayers();
+  addBboxOverlays(bboxFilterMap);
+
+  // Compute combined extent of visible overlays, pad it for the filter rect, and zoom to fit
+  const viewExtent = computeOverlayExtent() || dataBboxExtent;
+  const paddedExtent = viewExtent ? padBbox(viewExtent) : null;
+  if (paddedExtent) {
+    const [pw, ps, pe, pn] = paddedExtent;
+    bboxFilterMap.fitBounds([[ps, pw], [pn, pe]], { padding: [5, 5], animate: true });
+  }
+
+  // Reset filter rect bounds, corner markers, and style to match view extent
+  resetBboxRect(viewExtent);
+
+  // Update reset button and coords display
+  const resetBtn = document.getElementById('bboxReset');
+  if (resetBtn) resetBtn.style.display = currentFilters.bbox ? '' : 'none';
+  updateBboxCoordsDisplay();
+}
+
+// Draw bbox overlays for collections or items on the filter map
+function addBboxOverlays(map) {
+  bboxOverlayLayers = {};
+
+  const overlayStyle = {
+    color: '#6b9fc8',
+    fillColor: '#6b9fc8',
+    fillOpacity: 0.10,
+    weight: 1.5,
+    interactive: true,
+    bubblingMouseEvents: false
+  };
+
+  const highlightStyle = {
+    color: '#2563eb',
+    fillColor: '#2563eb',
+    fillOpacity: 0.18,
+    weight: 2.5
+  };
+
+  function addOverlay(id, bbox, label) {
+    const [w, s, e, n] = bbox;
+    if (w == null || s == null || e == null || n == null) return;
+    const targetLayer = bboxOverlayGroup || map;
+    const rect = L.rectangle([[s, w], [n, e]], overlayStyle)
+      .bindTooltip(label, { sticky: true, direction: 'top', opacity: 0.85 })
+      .addTo(targetLayer);
+    bboxOverlayLayers[id] = rect;
+    rect._overlayId = id;
+    rect.on('mouseover', () => {
+      rect.setStyle(highlightStyle);
+      highlightRow(id, true);
+    });
+    rect.on('mouseout', () => {
+      rect.setStyle(overlayStyle);
+      highlightRow(id, false);
+    });
+  }
+
+  if (!currentCollection) {
+    for (const col of collections) {
+      const bbox = col.extent?.spatial?.bbox?.[0];
+      if (!bbox || bbox.length < 4) continue;
+      addOverlay(col.id, bbox, col.title || col.id);
+    }
+  } else {
+    for (const item of items) {
+      const bbox = item.bbox;
+      if (!bbox || bbox.length < 4) continue;
+      addOverlay(item.id, bbox, item.properties?.title || item.id);
+    }
+  }
+}
+
+function highlightRow(id, highlight) {
+  const selector = currentCollection
+    ? `.file-item[data-item-id="${id}"]`
+    : `.collection-item[data-collection="${id}"]`;
+  const row = document.querySelector(selector);
+  if (row) {
+    row.classList.toggle('map-highlight', highlight);
+  }
+}
+
+function highlightOverlay(id, highlight) {
+  const rect = bboxOverlayLayers[id];
+  if (!rect) return;
+  if (highlight) {
+    rect.setStyle({ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.18, weight: 2.5 });
+    rect.bringToFront();
+  } else {
+    rect.setStyle({ color: '#6b9fc8', fillColor: '#6b9fc8', fillOpacity: 0.10, weight: 1.5 });
+  }
 }
 
 // Apply server-side filters with debounce
@@ -842,16 +1064,18 @@ function renderCollections() {
     `;
   }).join('');
 
-  // Add click handlers
+  // Add click and hover handlers
   container.querySelectorAll('.collection-item').forEach(el => {
     el.addEventListener('click', () => {
       loadCollection(el.dataset.collection);
     });
+    el.addEventListener('mouseenter', () => highlightOverlay(el.dataset.collection, true));
+    el.addEventListener('mouseleave', () => highlightOverlay(el.dataset.collection, false));
   });
 }
 
 // Load items for a collection
-async function loadCollection(collectionId, loadAll = false, pushHistory = true) {
+async function loadCollection(collectionId, pushHistory = true) {
   currentCollection = collectionId;
   currentExpandedItem = null; // Reset expanded item when changing collections
   if (pushHistory) {
@@ -864,7 +1088,7 @@ async function loadCollection(collectionId, loadAll = false, pushHistory = true)
 
   try {
     const params = buildFilterParams();
-    params.set('limit', loadAll ? '10000' : String(INITIAL_ITEMS_LIMIT));
+    params.set('limit', '10000');
     const response = await fetch(`${STAC_API}/collections/${collectionId}/items?${params}`);
     if (!response.ok) throw new Error('Failed to load items');
 
@@ -873,6 +1097,9 @@ async function loadCollection(collectionId, loadAll = false, pushHistory = true)
     totalItemCount = data.numberMatched || items.length;
 
     document.getElementById('fileCount').textContent = `(${totalItemCount} item${totalItemCount !== 1 ? 's' : ''})`;
+
+    // Refresh bbox overlays now that items are loaded
+    updateBboxOverlays();
 
     renderItems();
   } catch (err) {
@@ -959,7 +1186,11 @@ function renderItemAssets(assets) {
         <div class="file-group-content" id="${groupId}">
     `;
 
-    assets.forEach(asset => {
+    const INITIAL_FILES_LIMIT = 100;
+    const visibleAssets = assets.slice(0, INITIAL_FILES_LIMIT);
+    const hiddenAssets = assets.slice(INITIAL_FILES_LIMIT);
+
+    visibleAssets.forEach(asset => {
       const title = asset.title || asset.key;
       const size = asset['file:size'];
       const datetime = asset.datetime;
@@ -982,6 +1213,31 @@ function renderItemAssets(assets) {
       `;
     });
 
+    if (hiddenAssets.length > 0) {
+      const moreId = `file-more-${groupId}`;
+      html += `<div class="show-more-files" data-more-id="${moreId}"><button class="show-more-btn">Show ${hiddenAssets.length} more file${hiddenAssets.length !== 1 ? 's' : ''}...</button></div>`;
+      html += `<div class="file-more-content" id="${moreId}" style="display:none">`;
+      hiddenAssets.forEach(asset => {
+        const title = asset.title || asset.key;
+        const size = asset['file:size'];
+        const datetime = asset.datetime;
+        const href = asset.href || '#';
+        const hasGeo = asset['proj:bbox'] != null;
+        const dateStr = datetime ? formatDate(datetime) : '';
+        html += `
+          <a href="${href}" class="file-item asset-row" target="_blank" rel="noopener">
+            <span class="file-name">${title}</span>
+            <span class="asset-meta">
+              ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">📍</span>' : ''}
+              ${size ? `<span class="asset-size">${formatSize(size)}</span>` : ''}
+              ${dateStr ? `<span class="asset-date">${dateStr}</span>` : ''}
+            </span>
+          </a>
+        `;
+      });
+      html += `</div>`;
+    }
+
     html += `</div></div>`;
   });
 
@@ -999,13 +1255,6 @@ function renderItems() {
     container.innerHTML = '<div class="empty">No items match the current filters</div>';
     return;
   }
-
-  const remainingItems = totalItemCount - items.length;
-  const showMoreHtml = remainingItems > 0 ? `
-    <div class="show-more-items" id="showMoreItems">
-      <button class="show-more-btn">Show ${remainingItems} more item${remainingItems !== 1 ? 's' : ''}...</button>
-    </div>
-  ` : '';
 
   container.innerHTML = filteredItems.map(item => {
     const props = item.properties || {};
@@ -1082,6 +1331,7 @@ function renderItems() {
           ${archiveAsset ? `
           <div class="meta-actions">
             <a href="${archiveHref}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${formatSize(archiveAsset['file:size'])})</a>
+            ${archiveAsset['blatten:zip64'] ? `<div class="archive-note">This archive uses ZIP64 format. Some standard unzip tools may not extract it correctly &mdash; use a ZIP64-compatible archiver if you encounter issues.</div>` : ''}
           </div>
           ` : ''}
           <div class="meta-assets">
@@ -1093,37 +1343,7 @@ function renderItems() {
         </div>
       </div>
     `;
-  }).join('') + showMoreHtml;
-
-  // Handle "Show more items" click
-  const showMoreBtn = container.querySelector('#showMoreItems');
-  if (showMoreBtn) {
-    showMoreBtn.addEventListener('click', async () => {
-      const btn = showMoreBtn.querySelector('button');
-      btn.textContent = 'Loading...';
-      btn.disabled = true;
-
-      try {
-        // Fetch remaining items starting from current offset
-        const params = buildFilterParams();
-        params.set('limit', '10000');
-        params.set('offset', String(items.length));
-        const response = await fetch(`${STAC_API}/collections/${currentCollection}/items?${params}`);
-        if (!response.ok) throw new Error('Failed to load items');
-
-        const data = await response.json();
-        const newItems = data.features || [];
-
-        // Append new items to existing array
-        items = [...items, ...newItems];
-
-        // Re-render with all items
-        renderItems();
-      } catch (err) {
-        btn.textContent = `Error: ${err.message}`;
-      }
-    });
-  }
+  }).join('');
 
   // Header row click to expand/collapse (only the top bar, not the expanded content)
   container.querySelectorAll('.file-item.file .file-row').forEach(rowHeader => {
@@ -1187,6 +1407,19 @@ function renderItems() {
                     }
                   });
                 });
+
+                // Set up "show more files" handlers
+                assetsContainer.querySelectorAll('.show-more-files').forEach(btn => {
+                  btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const moreId = btn.dataset.moreId;
+                    const moreContent = document.getElementById(moreId);
+                    if (moreContent) {
+                      moreContent.style.display = '';
+                      btn.remove();
+                    }
+                  });
+                });
               } else {
                 assetsContainer.innerHTML = '<div class="empty">No files found</div>';
                 assetsContainer._assetsLoaded = true;
@@ -1198,6 +1431,15 @@ function renderItems() {
         }
       }
     });
+  });
+
+  // Add hover cross-highlighting for item rows ↔ map overlays
+  container.querySelectorAll('.file-item.file').forEach(el => {
+    const itemId = el.dataset.itemId;
+    if (itemId) {
+      el.addEventListener('mouseenter', () => highlightOverlay(itemId, true));
+      el.addEventListener('mouseleave', () => highlightOverlay(itemId, false));
+    }
   });
 
 }

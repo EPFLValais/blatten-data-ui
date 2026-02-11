@@ -38,7 +38,7 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  height: 60px;
+  height: 75px;
 }
 
 .header-left {
@@ -58,17 +58,14 @@ a:hover {
 }
 
 .header-logo img {
-  height: 60px;
+  height: 75px;
   width: auto;
 }
 
 
 .header-right {
-  position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  height: 58px;
 }
 
 .header-right a {
@@ -82,18 +79,8 @@ a:hover {
   opacity: 1;
 }
 
-.header-right a:last-child {
-  position: absolute !important;
-  bottom: 0 !important;
-}
-
-.header-right a:first-child img {
-  height: 30px;
-  width: auto;
-}
-
-.header-right a:last-child img {
-  height: 18px;
+.header-right img {
+  height: 80px;
   width: auto;
 }
 
@@ -644,10 +631,10 @@ a:hover {
   width: 18px;
   height: 18px;
   padding: 0;
-  border: 1px solid #ccc;
+  border: 1px solid #f87171;
   border-radius: 50%;
   background: white;
-  color: #999;
+  color: #dc2626;
   font-size: 0.85rem;
   line-height: 1;
   cursor: pointer;
@@ -662,10 +649,57 @@ a:hover {
 
 .bbox-map-container {
   width: 100%;
-  height: 150px;
+  height: 180px;
   border-radius: 4px;
   border: 1px solid #ddd;
   background: #f0f0f0;
+  transition: height 0.2s ease;
+}
+
+.bbox-map-container.bbox-map-tall {
+  height: 350px;
+}
+
+.bbox-map-zoom-extent-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  background: white;
+  color: #555;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.bbox-map-zoom-extent-btn:hover {
+  background: #f5f5f5;
+  color: #333;
+}
+
+.bbox-map-expand-height-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  background: white;
+  color: #555;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.bbox-map-expand-height-btn:hover {
+  background: #f5f5f5;
+  color: #333;
 }
 
 .bbox-map-hint {
@@ -1423,8 +1457,13 @@ a:hover {
   align-items: center;
 }
 
-.file-item.file .file-row:hover {
-  background: #f8f9fa;
+.file-item.file .file-row:hover,
+.file-item.map-highlight > .file-row {
+  background: #eff6ff;
+}
+
+.collection-item.map-highlight {
+  background: #eff6ff;
 }
 
 /* Expanded content should have default cursor */
@@ -1459,6 +1498,13 @@ a:hover {
 
 .meta-download-btn:hover {
   background: #0055aa;
+}
+
+.archive-note {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #888;
+  line-height: 1.4;
 }
 
 /* Mini map Leaflet container styling */
@@ -1649,54 +1695,75 @@ a:hover {
   text-align: center;
 }
 
-.attribution-grid {
+.attribution-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 2rem 3rem;
+  gap: 1.5rem 2.5rem;
+  max-width: 100%;
 }
 
-.attribution-grid a {
+.attribution-row:first-child {
+  gap: 1.5rem 4rem;
+}
+
+.attribution-row + .attribution-row {
+  max-width: 70%;
+  margin: 1.25rem auto 0;
+}
+
+.attribution-row a {
   display: flex;
   align-items: center;
   opacity: 0.7;
   transition: opacity 0.2s;
 }
 
-.attribution-grid a:hover {
+.attribution-row a:hover {
   opacity: 1;
 }
 
-.attribution-grid a.logo-dark {
-  background: #444;
-  padding: 6px 10px;
-  border-radius: 3px;
-  border: none;
-  opacity: 1;
-}
-
-.attribution-grid a.logo-dark:hover {
-  background: #333;
-}
-
-.attribution-grid img {
-  height: 40px;
+.attribution-row img {
+  height: 28px;
   width: auto;
   object-fit: contain;
   display: block;
 }
 
-.attribution-grid .logo-large img {
+.attribution-row:first-child img {
   height: 50px;
 }
 
-.attribution-grid a.logo-right {
-  margin-left: auto;
+/* EPFL + ALPOLE stacked vertically as a unit */
+.logo-epfl-alpole {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
 }
 
-.attribution-grid a.logo-right img {
-  height: 28px;
+.logo-epfl-alpole a {
+  display: flex;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.logo-epfl-alpole a:hover {
+  opacity: 1;
+}
+
+.logo-epfl-alpole a:first-child img {
+  height: 20px;
+}
+
+.logo-epfl-alpole a:last-child img {
+  height: 12px;
+}
+
+/* Albert Lück Stiftung */
+.attribution-row .logo-albert-lueck img {
+  height: 22px;
 }
 
 /* Footer */
@@ -1789,6 +1856,14 @@ a:hover {
 
   .header-logo img {
     height: 40px;
+  }
+
+  .header-right img {
+    height: 40px;
+  }
+
+  .attribution-row {
+    gap: 1rem 1.5rem;
   }
 
   .site-title {
