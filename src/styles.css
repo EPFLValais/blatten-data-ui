@@ -1508,6 +1508,7 @@ a:hover {
   font-size: 0.65rem;
   color: #b45309;
   margin-left: 0.5rem;
+  cursor: help;
 }
 
 /* Mini map Leaflet container styling */

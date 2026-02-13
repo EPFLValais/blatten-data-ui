@@ -30,6 +30,7 @@ let bboxOverlayLayers = {};    // Maps collection/item id → Leaflet rectangle 
 let bboxOverlayGroup = null;   // Leaflet layer group for overlays (rendered below filter rect)
 let bboxCornerMarkers = null;  // { sw, ne, nw, se } draggable corner markers
 let bboxMapRight = null;       // Persistent right-column DOM element (survives re-renders)
+let visibleCollections = [];   // Filtered collections currently shown in the list (used by map overlays)
 
 // History API integration for back button navigation
 function pushHistoryState(collectionId = null, expandedItem = null) {
@@ -822,7 +823,7 @@ function computeOverlayExtent() {
   let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
   let count = 0;
   if (!currentCollection) {
-    for (const col of collections) {
+    for (const col of visibleCollections) {
       const bbox = col.extent?.spatial?.bbox?.[0];
       if (!bbox || bbox.length < 4) continue;
       w = Math.min(w, bbox[0]); s = Math.min(s, bbox[1]);
@@ -927,7 +928,7 @@ function addBboxOverlays(map) {
   }
 
   if (!currentCollection) {
-    for (const col of collections) {
+    for (const col of visibleCollections) {
       const bbox = col.extent?.spatial?.bbox?.[0];
       if (!bbox || bbox.length < 4) continue;
       addOverlay(col.id, bbox, col.title || col.id);
@@ -1062,11 +1063,8 @@ async function applyServerFilters() {
 // Render collections list
 function renderCollections() {
   currentCollection = null;
-  updateBreadcrumb();
 
-  const container = document.getElementById('fileList');
-
-  // Filter collections based on sensor, source, and processing level filters
+  // Compute filtered collections BEFORE updateBreadcrumb so map overlays match the list
   let filteredCollections = collections;
   if (currentFilters.sensor) {
     filteredCollections = filteredCollections.filter(c => {
@@ -1128,6 +1126,11 @@ function renderCollections() {
     });
   }
 
+  // Store filtered list for map overlays, then update UI
+  visibleCollections = filteredCollections;
+  updateBreadcrumb();
+
+  const container = document.getElementById('fileList');
   document.getElementById('fileCount').textContent = `(${filteredCollections.length} collection${filteredCollections.length !== 1 ? 's' : ''})`;
 
   if (filteredCollections.length === 0) {
@@ -1266,7 +1269,7 @@ function renderItemAssets(assets, archiveInfo) {
       <span class="files-count">${fileAssets.length} files</span>
       ${totalSize > 0 ? `<span class="files-size">${formatSize(totalSize)}</span>` : ''}
       ${withGeo > 0 ? `<span class="files-geo" title="${withGeo} files with LV95 coordinates">📍 ${withGeo}</span>` : ''}
-      ${archiveInfo ? `<a href="${archiveInfo.href}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${archiveInfo.size})</a>${archiveInfo.zip64 ? '<span class="archive-note">ZIP64</span>' : ''}` : ''}
+      ${archiveInfo ? `<a href="${archiveInfo.href}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${archiveInfo.size})</a>${archiveInfo.zip64 ? '<span class="archive-note" title="This archive uses ZIP64 extensions. The built-in Archive Utility on macOS may not extract it correctly — use The Unarchiver, 7-Zip, or the command-line unzip tool instead.">ZIP64</span>' : ''}` : ''}
     </div>
   `;
 
@@ -1633,12 +1636,16 @@ async function loadCollections(pushHistory = false) {
   try {
     // Fetch collections and filtered items in parallel
     // Also fetch unfiltered items on first load to populate filter dropdowns
+    // Use STAC Fields Extension to request only the fields needed for the collections list
+    const fieldsParam = 'collection,properties.blatten:sensor,properties.blatten:source,properties.blatten:processing_level,-geometry,-links';
     const params = buildFilterParams();
     params.set('limit', '1000');
+    params.set('fields', fieldsParam);
     const needsFilterOptions = allSources.length === 0 && allSensors.length === 0;
     const unfilteredParams = new URLSearchParams();
     unfilteredParams.set('limit', '1000');
     unfilteredParams.set('exclude_assets', 'true');
+    unfilteredParams.set('fields', fieldsParam);
     const fetches = [
       fetch(`${STAC_API}/collections`),
       fetch(`${STAC_API}/search?${params}`),
@@ -1741,6 +1748,7 @@ async function loadCollections(pushHistory = false) {
         const searchParams = new URLSearchParams();
         searchParams.set('q', currentFilters.search);
         searchParams.set('exclude_assets', 'true');
+        searchParams.set('fields', 'collection,-geometry,-links,-bbox');
         searchParams.set('limit', '200');
         const searchRes = await fetch(`${STAC_API}/search?${searchParams}`);
         if (searchRes.ok) {
