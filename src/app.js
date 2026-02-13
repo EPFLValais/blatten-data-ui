@@ -499,7 +499,8 @@ function updateBreadcrumb() {
       // Only set filters if not at extremes
       currentFilters.dateFrom = fromVal > 0 ? sliderToDate(fromVal).toISOString() : '';
       currentFilters.dateTo = toVal < 1000 ? sliderToDate(toVal).toISOString() : '';
-      applyServerFiltersDebounced();
+      clearTimeout(serverFilterDebounceTimer);
+      serverFilterDebounceTimer = setTimeout(() => applyServerFilters(), 100);
     };
 
     dateFromSlider.addEventListener('input', onSliderInput);

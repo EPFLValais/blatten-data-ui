@@ -83,7 +83,7 @@ services:
   stac-api:
     build:
       context: ../blatten-data-api
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: blatten-stac-api
     restart: unless-stopped
     environment:
@@ -93,6 +93,7 @@ services:
       - PORT=3000
       - RUST_LOG=info,tower_http=debug
     volumes:
+      - ../blatten-data-api/src:/app/src
       - ../blatten-data-api/stac:/app/stac:ro
     labels:
       - "traefik.enable=true"
