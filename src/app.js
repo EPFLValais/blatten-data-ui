@@ -73,17 +73,77 @@ function collapseItem(itemId) {
   }
 }
 
-// Expand an item by ID (used by popstate handler)
-function expandItemById(itemId) {
+// Expand an item by ID (used by popstate handler and initial load)
+async function expandItemById(itemId) {
   const row = document.querySelector(`.file-item.file[data-item-id="${itemId}"]`);
-  if (row) {
-    const targetId = row.dataset.metaTarget;
-    const toggle = row.querySelector('.file-meta-toggle');
-    const metaEl = document.getElementById(targetId);
-    if (metaEl && !metaEl.classList.contains('expanded')) {
-      toggle?.classList.add('expanded');
-      metaEl.classList.add('expanded');
-      currentExpandedItem = itemId;
+  if (!row) return;
+  const targetId = row.dataset.metaTarget;
+  const toggle = row.querySelector('.file-meta-toggle');
+  const metaEl = document.getElementById(targetId);
+  if (!metaEl) return;
+
+  if (!metaEl.classList.contains('expanded')) {
+    toggle?.classList.add('expanded');
+    metaEl.classList.add('expanded');
+    currentExpandedItem = itemId;
+  }
+
+  // Load map and assets (same logic as click handler)
+  await loadExpandedItemContent(metaEl, itemId);
+}
+
+// Load mini map and file assets for an expanded item
+async function loadExpandedItemContent(metaEl, itemId) {
+  // Initialize mini map
+  const miniMapEl = metaEl.querySelector('.meta-mini-map');
+  if (miniMapEl && !miniMapEl._mapInitialized) {
+    initMiniMap(miniMapEl);
+  }
+
+  // Lazy load file assets
+  const assetsContainer = metaEl.querySelector('.meta-assets-content');
+  if (assetsContainer && !assetsContainer._assetsLoaded) {
+    assetsContainer.innerHTML = '<div class="loading-assets"><div class="spinner"></div>Loading files...</div>';
+    try {
+      const fullItem = await fetchItemAssets(currentCollection, itemId, 10000, 0);
+      if (fullItem && fullItem.assets) {
+        const archiveInfo = assetsContainer.dataset.archiveHref ? {
+          href: assetsContainer.dataset.archiveHref,
+          size: assetsContainer.dataset.archiveSize,
+          zip64: assetsContainer.dataset.archiveZip64 === '1'
+        } : null;
+        assetsContainer.innerHTML = renderItemAssets(fullItem.assets, archiveInfo);
+        assetsContainer._assetsLoaded = true;
+
+        // Set up file group toggle handlers
+        assetsContainer.querySelectorAll('.file-group-header').forEach(header => {
+          header.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const content = document.getElementById(header.dataset.target);
+            if (content) {
+              header.classList.toggle('expanded');
+              content.classList.toggle('expanded');
+            }
+          });
+        });
+
+        // Set up "show more files" handlers
+        assetsContainer.querySelectorAll('.show-more-files').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const moreContent = document.getElementById(btn.dataset.moreId);
+            if (moreContent) {
+              moreContent.style.display = '';
+              btn.remove();
+            }
+          });
+        });
+      } else {
+        assetsContainer.innerHTML = '<div class="empty">No files found</div>';
+        assetsContainer._assetsLoaded = true;
+      }
+    } catch (err) {
+      assetsContainer.innerHTML = `<div class="error-msg">Failed to load files: ${err.message}</div>`;
     }
   }
 }
@@ -151,12 +211,9 @@ async function initializeApp() {
     await loadCollections(false);
     await loadCollection(initialCollection, false, false);
 
-    // If there's an initial item to expand, expand it after a short delay for DOM to be ready
+    // If there's an initial item to expand, expand it now (DOM is ready after loadCollection)
     if (initialItem) {
-      setTimeout(() => {
-        expandItemById(initialItem);
-        currentExpandedItem = initialItem;
-      }, 100);
+      await expandItemById(initialItem);
     }
   } else {
     await loadCollections(false);
@@ -195,6 +252,15 @@ function formatDateRange(start, end) {
   return `${startStr} → ${endStr}`;
 }
 
+// Format date range as separate parts for aligned columns
+function formatDateParts(start, end) {
+  if (!start && !end) return { start: '-', sep: '', end: '' };
+  const startStr = start ? formatDate(start) : '...';
+  const endStr = end ? formatDate(end) : 'ongoing';
+  if (start === end || !end) return { start: startStr, sep: '', end: '' };
+  return { start: startStr, sep: '\u2192', end: endStr };
+}
+
 // Get file icon based on format
 function getIcon(format) {
   const icons = {
@@ -208,6 +274,28 @@ function getIcon(format) {
   return icons[format?.toUpperCase()] || '📄';
 }
 
+// Get icon for a collection based on its ID
+function getCollectionIcon(collectionId) {
+  const icons = {
+    'orthophoto': '📷',
+    'webcam-image': '📹',
+    'point-cloud': '☁️',
+    'radar-displacement': '📡',
+    'radar-amplitude': '📡',
+    'radar-coherence': '📡',
+    'radar-velocity': '📡',
+    'radar-timeseries': '📡',
+    'deformation-analysis': '📐',
+    'dsm': '🏔️',
+    'dem': '🏔️',
+    '3d-model': '🎨',
+    'gnss-data': '📍',
+    'thermal-image': '🌡️',
+    'hydrology': '💧',
+    'lake-level': '💧',
+  };
+  return icons[collectionId] || '📁';
+}
 
 // Update breadcrumb and filters
 function updateBreadcrumb() {
@@ -779,11 +867,14 @@ function updateBboxOverlays() {
   addBboxOverlays(bboxFilterMap);
 
   // Compute combined extent of visible overlays, pad it for the filter rect, and zoom to fit
+  // Skip auto-zoom when a bbox filter is active (user is editing the rectangle)
   const viewExtent = computeOverlayExtent() || dataBboxExtent;
-  const paddedExtent = viewExtent ? padBbox(viewExtent) : null;
-  if (paddedExtent) {
-    const [pw, ps, pe, pn] = paddedExtent;
-    bboxFilterMap.fitBounds([[ps, pw], [pn, pe]], { padding: [5, 5], animate: true });
+  if (!currentFilters.bbox) {
+    const paddedExtent = viewExtent ? padBbox(viewExtent) : null;
+    if (paddedExtent) {
+      const [pw, ps, pe, pn] = paddedExtent;
+      bboxFilterMap.fitBounds([[ps, pw], [pn, pe]], { padding: [5, 5], animate: true });
+    }
   }
 
   // Reset filter rect bounds, corner markers, and style to match view extent
@@ -1044,20 +1135,29 @@ function renderCollections() {
   }
 
   container.innerHTML = filteredCollections.map(collection => {
-    const itemCount = collection._itemCount || '';
+    const itemCount = collection._itemCount || 0;
     const searchMatchCount = collection._searchMatchCount || 0;
     const temporal = collection.extent?.temporal?.interval?.[0];
-    const dateRange = temporal ? formatDateRange(temporal[0], temporal[1]) : '';
+    const dateParts = temporal ? formatDateParts(temporal[0], temporal[1]) : { start: '-', sep: '', end: '' };
+    const icon = getCollectionIcon(collection.id);
+    const badgeText = searchMatchCount > 0
+      ? `${searchMatchCount} match${searchMatchCount !== 1 ? 'es' : ''}`
+      : (itemCount > 0 ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : '');
 
     return `
       <div class="file-item folder collection-item" data-collection="${collection.id}">
         <div class="file-row">
+          <span class="collection-nav-arrow">&#x203A;</span>
           <div class="file-name">
+            <span class="icon">${icon}</span>
             <span class="name">${collection.title || collection.id}</span>
-            ${searchMatchCount > 0 ? `<span class="file-count-badge">${searchMatchCount} match${searchMatchCount !== 1 ? 'es' : ''}</span>` : ''}
           </div>
+          ${badgeText ? `<span class="file-count-badge">${badgeText}</span>` : '<span class="file-count-badge"></span>'}
           <div class="file-info">
-            <span class="collection-date">${dateRange}</span>
+            <span class="info-size"></span>
+            <span class="info-date-start">${dateParts.start}</span>
+            <span class="info-date-sep">${dateParts.sep}</span>
+            <span class="info-date-end">${dateParts.end}</span>
           </div>
         </div>
       </div>
@@ -1124,7 +1224,7 @@ function getExtension(href, title) {
 
 // Render assets list as collapsible file groups
 // Takes item.assets object (new STAC structure where files are assets, not child items)
-function renderItemAssets(assets) {
+function renderItemAssets(assets, archiveInfo) {
   if (!assets) {
     return '<div class="empty">No files found</div>';
   }
@@ -1165,6 +1265,7 @@ function renderItemAssets(assets) {
       <span class="files-count">${fileAssets.length} files</span>
       ${totalSize > 0 ? `<span class="files-size">${formatSize(totalSize)}</span>` : ''}
       ${withGeo > 0 ? `<span class="files-geo" title="${withGeo} files with LV95 coordinates">📍 ${withGeo}</span>` : ''}
+      ${archiveInfo ? `<a href="${archiveInfo.href}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${archiveInfo.size})</a>${archiveInfo.zip64 ? '<span class="archive-note">ZIP64</span>' : ''}` : ''}
     </div>
   `;
 
@@ -1275,7 +1376,7 @@ function renderItems() {
     // Date range
     const startDate = props.start_datetime || props.datetime;
     const endDate = props.end_datetime;
-    const dateDisplay = formatDateRange(startDate, endDate);
+    const dateParts = formatDateParts(startDate, endDate);
 
     // Metadata
     const source = props['blatten:source'] || '';
@@ -1300,11 +1401,13 @@ function renderItems() {
           <div class="file-name">
             <span class="icon">${icon}</span>
             <span class="name">${props.title || item.id}</span>
-            <span class="file-count-badge">${fileCount} files</span>
           </div>
+          <span class="file-count-badge">${fileCount} files</span>
           <div class="file-info">
-            <span>${formatSize(totalSize)}</span>
-            <span>${dateDisplay}</span>
+            <span class="info-size">${formatSize(totalSize)}</span>
+            <span class="info-date-start">${dateParts.start}</span>
+            <span class="info-date-sep">${dateParts.sep}</span>
+            <span class="info-date-end">${dateParts.end}</span>
           </div>
         </div>
         <div class="file-meta" id="${metaId}">
@@ -1317,27 +1420,17 @@ function renderItems() {
               ${frequency ? `<div class="meta-row"><span class="meta-label">Frequency</span><span class="meta-value">${frequency}</span></div>` : ''}
               ${additionalInfo ? `<div class="meta-row"><span class="meta-label">Additional Info</span><span class="meta-value">${additionalInfo}</span></div>` : ''}
               ${format ? `<div class="meta-row"><span class="meta-label">Format</span><span class="meta-value">${format}</span></div>` : ''}
+              ${item.bbox ? `<div class="meta-row"><span class="meta-label">BBox</span><span class="meta-value bbox">[${item.bbox[0]?.toFixed(4)}, ${item.bbox[1]?.toFixed(4)}, ${item.bbox[2]?.toFixed(4)}, ${item.bbox[3]?.toFixed(4)}]</span></div>` : ''}
             </div>
             ${item.bbox ? `
             <div class="meta-map-section">
               <div class="meta-mini-map" id="minimap-${metaId}" data-bbox="${item.bbox.join(',')}" data-geometry='${JSON.stringify(item.geometry)}' data-item-id="${item.id}" data-collection-id="${currentCollection}"></div>
-              <div class="meta-bbox">
-                <div class="bbox-row"><span class="bbox-corner">SW</span><span class="bbox-coords">${item.bbox[0]?.toFixed(4)}°, ${item.bbox[1]?.toFixed(4)}°</span></div>
-                <div class="bbox-row"><span class="bbox-corner">NE</span><span class="bbox-coords">${item.bbox[2]?.toFixed(4)}°, ${item.bbox[3]?.toFixed(4)}°</span></div>
-              </div>
             </div>
             ` : ''}
           </div>
-          ${archiveAsset ? `
-          <div class="meta-actions">
-            <a href="${archiveHref}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${formatSize(archiveAsset['file:size'])})</a>
-            ${archiveAsset['blatten:zip64'] ? `<div class="archive-note">This archive uses ZIP64 format. Some standard unzip tools may not extract it correctly &mdash; use a ZIP64-compatible archiver if you encounter issues.</div>` : ''}
-          </div>
-          ` : ''}
           <div class="meta-assets">
-            <div class="meta-assets-header">Individual Files</div>
-            <div class="meta-assets-content">
-              <div class="assets-placeholder">Expand to load file list...</div>
+            <div class="meta-assets-content" data-archive-href="${archiveAsset ? archiveHref : ''}" data-archive-size="${archiveAsset ? formatSize(archiveAsset['file:size']) : ''}" data-archive-zip64="${archiveAsset?.['blatten:zip64'] ? '1' : ''}">
+              <div class="assets-placeholder">Loading files...</div>
             </div>
           </div>
         </div>
@@ -1349,7 +1442,7 @@ function renderItems() {
   container.querySelectorAll('.file-item.file .file-row').forEach(rowHeader => {
     rowHeader.addEventListener('click', async (e) => {
       // Don't toggle if clicking download button
-      if (e.target.closest('.download-btn')) {
+      if (e.target.closest('.download-btn') || e.target.closest('.meta-download-btn')) {
         return;
       }
       const row = rowHeader.closest('.file-item.file');
@@ -1377,57 +1470,7 @@ function renderItems() {
 
         // When expanding, load full item data and initialize map
         if (isExpanding) {
-          // Initialize mini map
-          const miniMapEl = metaEl.querySelector('.meta-mini-map');
-          if (miniMapEl && !miniMapEl._mapInitialized) {
-            initMiniMap(miniMapEl);
-          }
-
-          // Lazy load file assets (files are now assets within the item, not child items)
-          // Items are fetched with exclude_assets=true, so we need to fetch full item details
-          const assetsContainer = metaEl.querySelector('.meta-assets-content');
-          if (assetsContainer && !assetsContainer._assetsLoaded) {
-            assetsContainer.innerHTML = '<div class="loading-assets"><div class="spinner"></div>Loading files...</div>';
-            try {
-              // Fetch full item with all assets (use high limit to get all files)
-              const fullItem = await fetchItemAssets(currentCollection, itemId, 10000, 0);
-              if (fullItem && fullItem.assets) {
-                assetsContainer.innerHTML = renderItemAssets(fullItem.assets);
-                assetsContainer._assetsLoaded = true;
-
-                // Set up file group toggle handlers
-                assetsContainer.querySelectorAll('.file-group-header').forEach(header => {
-                  header.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const targetId = header.dataset.target;
-                    const content = document.getElementById(targetId);
-                    if (content) {
-                      header.classList.toggle('expanded');
-                      content.classList.toggle('expanded');
-                    }
-                  });
-                });
-
-                // Set up "show more files" handlers
-                assetsContainer.querySelectorAll('.show-more-files').forEach(btn => {
-                  btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const moreId = btn.dataset.moreId;
-                    const moreContent = document.getElementById(moreId);
-                    if (moreContent) {
-                      moreContent.style.display = '';
-                      btn.remove();
-                    }
-                  });
-                });
-              } else {
-                assetsContainer.innerHTML = '<div class="empty">No files found</div>';
-                assetsContainer._assetsLoaded = true;
-              }
-            } catch (err) {
-              assetsContainer.innerHTML = `<div class="error-msg">Failed to load files: ${err.message}</div>`;
-            }
-          }
+          await loadExpandedItemContent(metaEl, itemId);
         }
       }
     });
@@ -1555,16 +1598,16 @@ function initMiniMap(el) {
   const itemId = el.dataset.itemId;
   const collectionId = el.dataset.collectionId;
 
-  // Build KML URL from our API (publicly accessible URL for map.geo.admin.ch to fetch)
-  // Note: This requires the API to be publicly accessible with CORS enabled
-  const kmlUrl = `${window.location.origin}${STAC_API}/kml?collection_id=${encodeURIComponent(collectionId)}&item_id=${encodeURIComponent(itemId)}`;
+  // Build KML URL using path-based route (no query params — avoids URL encoding
+  // issues in SwissTopo's hash fragment where &item_id gets split off as a hash param)
+  const kmlUrl = `${window.location.origin}${STAC_API}/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}/kml`;
 
   // Build SwissTopo URL with new 2024 format:
   // - Hash-based URL: #/map?...
   // - center=E,N in LV95 coordinates
   // - z= instead of zoom=
   // - layers=KML%7C<url> where %7C is URL-encoded pipe
-  const swisstopoUrl = `https://map.geo.admin.ch/#/map?lang=en&bgLayer=ch.swisstopo.pixelkarte-farbe&z=${zoom}&center=${lv95.E},${lv95.N}&layers=KML%7C${kmlUrl}`;
+  const swisstopoUrl = `https://map.geo.admin.ch/#/map?lang=en&bgLayer=ch.swisstopo.pixelkarte-farbe&z=${zoom}&center=${lv95.E},${lv95.N}&layers=KML%7C${encodeURIComponent(kmlUrl)}`;
 
   // Add "Open in SwissTopo" button
   const openSwisstopoBtn = document.createElement('a');
@@ -1658,11 +1701,16 @@ async function loadCollections(pushHistory = false) {
       sourcesByCollection = {};
       processingLevelsByCollection = {};
 
+      const itemCountByCollection = {};
       (itemsData.features || []).forEach(item => {
         const sensor = item.properties?.['blatten:sensor'];
         const source = item.properties?.['blatten:source'];
         const processingLevel = item.properties?.['blatten:processing_level'];
         const collectionId = item.collection;
+
+        if (collectionId) {
+          itemCountByCollection[collectionId] = (itemCountByCollection[collectionId] || 0) + 1;
+        }
 
         if (sensor && collectionId) {
           if (!sensorsByCollection[collectionId]) sensorsByCollection[collectionId] = [];
@@ -1679,6 +1727,9 @@ async function loadCollections(pushHistory = false) {
           if (!processingLevelsByCollection[collectionId]) processingLevelsByCollection[collectionId] = [];
           if (!processingLevelsByCollection[collectionId].includes(levelStr)) processingLevelsByCollection[collectionId].push(levelStr);
         }
+      });
+      collections.forEach(c => {
+        c._itemCount = itemCountByCollection[c.id] || 0;
       });
     }
 
