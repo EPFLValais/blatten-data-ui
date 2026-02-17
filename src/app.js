@@ -264,38 +264,12 @@ function formatDateParts(start, end) {
 
 // Get file icon based on format
 function getIcon(format) {
-  const icons = {
-    'JPG': '📷', 'JPEG': '📷', 'PNG': '📷', 'GIF': '📷', 'TIF': '📷', 'TIFF': '📷',
-    'CSV': '📊', 'XLS': '📊', 'XLSX': '📊',
-    'PDF': '📄', 'DOC': '📄', 'DOCX': '📄',
-    'LAZ': '☁️', 'LAS': '☁️',
-    'OBJ': '🎨', 'GLB': '🎨', 'GLTF': '🎨',
-    'ZIP': '📦', '7Z': '📦', 'TAR': '📦', 'GZ': '📦',
-  };
-  return icons[format?.toUpperCase()] || '📄';
+  return '';
 }
 
 // Get icon for a collection based on its ID
 function getCollectionIcon(collectionId) {
-  const icons = {
-    'orthophoto': '📷',
-    'webcam-image': '📹',
-    'point-cloud': '☁️',
-    'radar-displacement': '📡',
-    'radar-amplitude': '📡',
-    'radar-coherence': '📡',
-    'radar-velocity': '📡',
-    'radar-timeseries': '📡',
-    'deformation-analysis': '📐',
-    'dsm': '🏔️',
-    'dem': '🏔️',
-    '3d-model': '🎨',
-    'gnss-data': '📍',
-    'thermal-image': '🌡️',
-    'hydrology': '💧',
-    'lake-level': '💧',
-  };
-  return icons[collectionId] || '📁';
+  return '';
 }
 
 // Update breadcrumb and filters
@@ -1143,7 +1117,6 @@ function renderCollections() {
     const searchMatchCount = collection._searchMatchCount || 0;
     const temporal = collection.extent?.temporal?.interval?.[0];
     const dateParts = temporal ? formatDateParts(temporal[0], temporal[1]) : { start: '-', sep: '', end: '' };
-    const icon = getCollectionIcon(collection.id);
     const badgeText = searchMatchCount > 0
       ? `${searchMatchCount} match${searchMatchCount !== 1 ? 'es' : ''}`
       : (itemCount > 0 ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : '');
@@ -1153,7 +1126,6 @@ function renderCollections() {
         <div class="file-row">
           <span class="collection-nav-arrow">&#x203A;</span>
           <div class="file-name">
-            <span class="icon">${icon}</span>
             <span class="name">${collection.title || collection.id}</span>
           </div>
           ${badgeText ? `<span class="file-count-badge">${badgeText}</span>` : '<span class="file-count-badge"></span>'}
@@ -1268,14 +1240,13 @@ function renderItemAssets(assets, archiveInfo) {
     <div class="files-header">
       <span class="files-count">${fileAssets.length} files</span>
       ${totalSize > 0 ? `<span class="files-size">${formatSize(totalSize)}</span>` : ''}
-      ${withGeo > 0 ? `<span class="files-geo" title="${withGeo} files with LV95 coordinates">📍 ${withGeo}</span>` : ''}
+      ${withGeo > 0 ? `<span class="files-geo" title="${withGeo} files with LV95 coordinates">${withGeo} with coordinates</span>` : ''}
       ${archiveInfo ? `<a href="${archiveInfo.href}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${archiveInfo.size})</a>${archiveInfo.zip64 ? '<span class="archive-note" title="This archive uses ZIP64 extensions. The built-in Archive Utility on macOS may not extract it correctly — use The Unarchiver, 7-Zip, or the command-line unzip tool instead.">ZIP64</span>' : ''}` : ''}
     </div>
   `;
 
   // Render collapsible groups
   sortedGroups.forEach(([ext, assets], groupIndex) => {
-    const icon = getIcon(ext);
     const groupSize = assets.reduce((sum, asset) => sum + (asset['file:size'] || 0), 0);
     const groupId = `file-group-${Date.now()}-${groupIndex}`;
 
@@ -1283,7 +1254,6 @@ function renderItemAssets(assets, archiveInfo) {
       <div class="file-group">
         <div class="file-group-header" data-target="${groupId}">
           <span class="file-group-toggle">▶</span>
-          <span class="file-group-icon">${icon}</span>
           <span class="file-group-ext">${ext}</span>
           <span class="file-group-badge">${assets.length}</span>
           <span class="file-group-size">${formatSize(groupSize)}</span>
@@ -1310,7 +1280,7 @@ function renderItemAssets(assets, archiveInfo) {
         <a href="${href}" class="file-item asset-row" target="_blank" rel="noopener">
           <span class="file-name">${title}</span>
           <span class="asset-meta">
-            ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">📍</span>' : ''}
+            ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">LV95</span>' : ''}
             ${size ? `<span class="asset-size">${formatSize(size)}</span>` : ''}
             ${dateStr ? `<span class="asset-date">${dateStr}</span>` : ''}
           </span>
@@ -1333,7 +1303,7 @@ function renderItemAssets(assets, archiveInfo) {
           <a href="${href}" class="file-item asset-row" target="_blank" rel="noopener">
             <span class="file-name">${title}</span>
             <span class="asset-meta">
-              ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">📍</span>' : ''}
+              ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">LV95</span>' : ''}
               ${size ? `<span class="asset-size">${formatSize(size)}</span>` : ''}
               ${dateStr ? `<span class="asset-date">${dateStr}</span>` : ''}
             </span>
@@ -1372,11 +1342,6 @@ function renderItems() {
     const fileAssets = Object.entries(assets).filter(([key]) => key !== 'archive');
     const totalSize = props['blatten:total_size'] || fileAssets.reduce((sum, [, a]) => sum + (a['file:size'] || 0), 0);
 
-    // Determine icon from first non-archive asset
-    const firstAsset = fileAssets[0];
-    const firstExt = firstAsset ? getExtension(firstAsset[1].href, firstAsset[1].title) : format;
-    const icon = getIcon(firstExt);
-
     // Date range
     const startDate = props.start_datetime || props.datetime;
     const endDate = props.end_datetime;
@@ -1403,7 +1368,6 @@ function renderItems() {
             <span class="arrow">&#9654;</span>
           </span>
           <div class="file-name">
-            <span class="icon">${icon}</span>
             <span class="name">${props.title || item.id}</span>
           </div>
           <span class="file-count-badge">${fileCount} files</span>
@@ -1588,12 +1552,12 @@ function initMiniMap(el) {
   // Build SwissTopo map.geo.admin.ch URL with KML layer from our API
   // Calculate appropriate zoom based on extent
   const extentSize = Math.max(bboxWidth, bboxHeight);
-  let zoom = 10;
-  if (extentSize > 0.1) zoom = 8;
-  else if (extentSize > 0.05) zoom = 9;
-  else if (extentSize > 0.01) zoom = 11;
-  else if (extentSize > 0.005) zoom = 12;
-  else zoom = 13;
+  let zoom = 8;
+  if (extentSize > 0.1) zoom = 6;
+  else if (extentSize > 0.05) zoom = 7;
+  else if (extentSize > 0.01) zoom = 9;
+  else if (extentSize > 0.005) zoom = 10;
+  else zoom = 11;
 
   // Convert center to LV95 coordinates (required by new map.geo.admin.ch URL format)
   const lv95 = wgs84ToLv95(centerLng, centerLat);
