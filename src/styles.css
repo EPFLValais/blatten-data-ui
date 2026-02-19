@@ -1920,6 +1920,11 @@ a:hover {
     flex: 1;
     min-width: 60px;
   }
+
+  /* Collection/item rows: hide dates on mobile, keep rows compact */
+  .file-row .file-info {
+    display: none;
+  }
 }
 
 /* Footer */

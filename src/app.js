@@ -1089,11 +1089,12 @@ function renderCollections() {
 
   // Filter by search text (title/description match + cross-collection item search)
   if (currentFilters.search) {
-    const searchLower = currentFilters.search.toLowerCase();
+    const words = currentFilters.search.toLowerCase().split(/\s+/).filter(Boolean);
     filteredCollections = filteredCollections.filter(c => {
       const title = (c.title || c.id || '').toLowerCase();
       const description = (c.description || '').toLowerCase();
-      const titleMatch = title.includes(searchLower) || description.includes(searchLower);
+      const text = title + ' ' + description;
+      const titleMatch = words.every(w => text.includes(w));
       // Also include collections that have matching items (from search results)
       const itemMatch = (c._searchMatchCount || 0) > 0;
       return titleMatch || itemMatch;
