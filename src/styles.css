@@ -44,7 +44,11 @@ a:hover {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+}
+
+.header-center {
+  flex: 1;
+  text-align: center;
 }
 
 .header-logo {
@@ -1681,6 +1685,20 @@ a:hover {
   color: #555;
 }
 
+/* OGD links */
+.ogd-links {
+  margin: 0.5rem 0 0 1.5rem;
+  padding: 0;
+}
+
+.ogd-links li {
+  margin-bottom: 0.5rem;
+}
+
+.ogd-links li:last-child {
+  margin-bottom: 0;
+}
+
 /* Attribution */
 .attribution {
   padding: 2rem;
@@ -1852,11 +1870,6 @@ a:hover {
   .meta-bbox {
     max-width: 100%;
   }
-
-  .header-left {
-    gap: 0.75rem;
-  }
-
 
   .header-logo img {
     height: 40px;
