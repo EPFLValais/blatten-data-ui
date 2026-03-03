@@ -1389,7 +1389,16 @@ function renderItems() {
               ${frequency ? `<div class="meta-row"><span class="meta-label">Frequency</span><span class="meta-value">${frequency}</span></div>` : ''}
               ${additionalInfo ? `<div class="meta-row"><span class="meta-label">Additional Info</span><span class="meta-value">${additionalInfo}</span></div>` : ''}
               ${format ? `<div class="meta-row"><span class="meta-label">Format</span><span class="meta-value">${format}</span></div>` : ''}
-              ${item.bbox ? `<div class="meta-row"><span class="meta-label">BBox</span><span class="meta-value bbox">[${item.bbox[0]?.toFixed(4)}, ${item.bbox[1]?.toFixed(4)}, ${item.bbox[2]?.toFixed(4)}, ${item.bbox[3]?.toFixed(4)}]</span></div>` : ''}
+              ${item.bbox ? `<div class="meta-row"><span class="meta-label">BBox</span><span class="meta-value bbox">${
+                item.bbox.length === 6
+                  ? `[${item.bbox[0]?.toFixed(4)}, ${item.bbox[1]?.toFixed(4)}, ${item.bbox[3]?.toFixed(4)}, ${item.bbox[4]?.toFixed(4)}]`
+                  : `[${item.bbox[0]?.toFixed(4)}, ${item.bbox[1]?.toFixed(4)}, ${item.bbox[2]?.toFixed(4)}, ${item.bbox[3]?.toFixed(4)}]`
+              }</span></div>` : ''}
+              ${item.bbox?.length === 6 ? `<div class="meta-row"><span class="meta-label">Elevation</span><span class="meta-value elevation">${
+                item.bbox[2] === item.bbox[5]
+                  ? `${Math.round(item.bbox[2])} m`
+                  : `${Math.round(item.bbox[2])}\u2013${Math.round(item.bbox[5])} m`
+              }</span></div>` : ''}
             </div>
             ${item.bbox ? `
             <div class="meta-map-section">
@@ -1488,7 +1497,11 @@ function initMiniMap(el) {
 
   if (!bboxStr) return;
 
-  const bbox = bboxStr.split(',').map(Number);
+  // Parse raw bbox and normalize to 4-element [w,s,e,n] for map operations
+  const bboxRaw = bboxStr.split(',').map(Number);
+  const bbox = bboxRaw.length === 6
+    ? [bboxRaw[0], bboxRaw[1], bboxRaw[3], bboxRaw[4]]
+    : bboxRaw;
   const geometry = geometryStr ? JSON.parse(geometryStr) : null;
 
   // Calculate center from bbox [minX, minY, maxX, maxY]
