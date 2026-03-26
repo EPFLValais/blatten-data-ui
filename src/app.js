@@ -492,8 +492,8 @@ function updateBreadcrumb() {
 }
 
 // Update the bbox coordinate display and edit inputs from current filter state
-function updateBboxCoordsDisplay() {
-  const bbox = currentFilters.bbox || dataBboxExtent;
+function updateBboxCoordsDisplay(viewExtent) {
+  const bbox = currentFilters.bbox || viewExtent || dataBboxExtent;
   if (!bbox) return;
   const swEl = document.getElementById('bboxSW');
   const neEl = document.getElementById('bboxNE');
@@ -784,6 +784,14 @@ function initBboxFilterMap() {
   bboxFilterMap = map;
 }
 
+// Normalize a STAC bbox to 4-element [west, south, east, north].
+// Handles both 4-element (2D) and 6-element (3D with elevation) formats.
+function normalizeBbox(bbox) {
+  if (!bbox || bbox.length < 4) return null;
+  if (bbox.length === 6) return [bbox[0], bbox[1], bbox[3], bbox[4]];
+  return bbox;
+}
+
 // Pad a bbox [w, s, e, n] by a fraction of its size on each side (default 5%)
 function padBbox(bbox, fraction = 0.15) {
   const [w, s, e, n] = bbox;
@@ -806,8 +814,8 @@ function computeOverlayExtent() {
     }
   } else {
     for (const item of items) {
-      const bbox = item.bbox;
-      if (!bbox || bbox.length < 4) continue;
+      const bbox = normalizeBbox(item.bbox);
+      if (!bbox) continue;
       w = Math.min(w, bbox[0]); s = Math.min(s, bbox[1]);
       e = Math.max(e, bbox[2]); n = Math.max(n, bbox[3]);
       count++;
@@ -859,7 +867,7 @@ function updateBboxOverlays() {
   // Update reset button and coords display
   const resetBtn = document.getElementById('bboxReset');
   if (resetBtn) resetBtn.style.display = currentFilters.bbox ? '' : 'none';
-  updateBboxCoordsDisplay();
+  updateBboxCoordsDisplay(viewExtent);
 }
 
 // Draw bbox overlays for collections or items on the filter map
@@ -909,8 +917,8 @@ function addBboxOverlays(map) {
     }
   } else {
     for (const item of items) {
-      const bbox = item.bbox;
-      if (!bbox || bbox.length < 4) continue;
+      const bbox = normalizeBbox(item.bbox);
+      if (!bbox) continue;
       addOverlay(item.id, bbox, item.properties?.title || item.id);
     }
   }
@@ -1499,9 +1507,7 @@ function initMiniMap(el) {
 
   // Parse raw bbox and normalize to 4-element [w,s,e,n] for map operations
   const bboxRaw = bboxStr.split(',').map(Number);
-  const bbox = bboxRaw.length === 6
-    ? [bboxRaw[0], bboxRaw[1], bboxRaw[3], bboxRaw[4]]
-    : bboxRaw;
+  const bbox = normalizeBbox(bboxRaw) || bboxRaw;
   const geometry = geometryStr ? JSON.parse(geometryStr) : null;
 
   // Calculate center from bbox [minX, minY, maxX, maxY]
