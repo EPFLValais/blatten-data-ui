@@ -575,14 +575,14 @@ function initBboxFilterMap() {
   });
 
   L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg', {
-    maxZoom: 19
+    maxZoom: 19,
+    opacity: 0.65
   }).addTo(map);
 
   map.fitBounds([[paddedInit[1], paddedInit[0]], [paddedInit[3], paddedInit[2]]], { padding: [5, 5] });
 
-  // Draw collection/item bbox overlays (layer group sits below the filter rect)
-  bboxOverlayGroup = L.layerGroup().addTo(map);
-  addBboxOverlays(map);
+  // Overlay group added after filter rect (below) so item overlays render on top
+  bboxOverlayGroup = L.layerGroup();
 
   // Zoom-to-extent control
   const ZoomExtentControl = L.Control.extend({
@@ -635,14 +635,27 @@ function initBboxFilterMap() {
   });
   map.addControl(new ExpandHeightControl());
 
-  // Draw the editable rectangle (always visible)
-  const rectStyle = {
-    color: currentFilters.bbox ? '#0066cc' : '#666',
+  // Filter rect — always visible, non-interactive (events pass through to overlays/map)
+  bboxFilterRect = L.rectangle([[as, aw], [an, ae]], {
+    color: '#0066cc',
     weight: 2,
-    fillOpacity: currentFilters.bbox ? 0.15 : 0.05,
-    dashArray: currentFilters.bbox ? '5, 5' : '3, 3'
-  };
-  bboxFilterRect = L.rectangle([[as, aw], [an, ae]], rectStyle).addTo(map);
+    fillOpacity: 0.12,
+    dashArray: '5, 5',
+    interactive: false
+  }).addTo(map);
+
+  // Add overlay group on top of filter rect so item overlays intercept clicks first
+  bboxOverlayGroup.addTo(map);
+  addBboxOverlays(map);
+
+  // Click outside the filter rect clears an active bbox filter
+  map.on('click', (e) => {
+    if (!currentFilters.bbox) return;
+    if (!bboxFilterRect.getBounds().contains(e.latlng)) {
+      currentFilters.bbox = null;
+      applyServerFiltersDebounced(true);
+    }
+  });
 
   // Create 4 draggable corner markers
   const mkIcon = (dir) => L.divIcon({ className: `bbox-corner-marker bbox-corner-marker-${dir}`, iconSize: [12, 12], iconAnchor: [6, 6] });
@@ -655,14 +668,13 @@ function initBboxFilterMap() {
   function updateRectFromCorners() {
     const swll = sw.getLatLng();
     const nell = ne.getLatLng();
-    bboxFilterRect.setBounds(L.latLngBounds(swll, nell));
+    const bounds = L.latLngBounds(swll, nell);
+    bboxFilterRect.setBounds(bounds);
     // Sync the other two corners
     nw.setLatLng([nell.lat, swll.lng]);
     se.setLatLng([swll.lat, nell.lng]);
     // Update coordinate display
     updateBboxDisplay(swll.lng, swll.lat, nell.lng, nell.lat);
-    // Style as active filter
-    bboxFilterRect.setStyle({ color: '#0066cc', fillOpacity: 0.15, dashArray: '5, 5' });
   }
 
   function updateBboxDisplay(w, s, e, n) {
@@ -742,24 +754,85 @@ function initBboxFilterMap() {
   });
   se.on('dragend', applyBboxFromCorners);
 
-  // Make the rectangle itself draggable (click and drag the fill area to move the whole bbox)
+  // Edge-proximity detection: returns true if latlng is within thresholdPx of any filter rect edge
+  function isNearBboxEdge(latlng, thresholdPx = 5) {
+    if (!bboxFilterRect) return false;
+    const bounds = bboxFilterRect.getBounds();
+    const point = map.latLngToContainerPoint(latlng);
+    const swPx = map.latLngToContainerPoint(bounds.getSouthWest());
+    const nePx = map.latLngToContainerPoint(bounds.getNorthEast());
+    // In screen coords: ne.y < sw.y (y increases downward)
+    const left = swPx.x, right = nePx.x, top = nePx.y, bottom = swPx.y;
+    const x = point.x, y = point.y;
+    // Must be within expanded rect (rect + threshold margin)
+    if (x < left - thresholdPx || x > right + thresholdPx ||
+        y < top - thresholdPx || y > bottom + thresholdPx) return false;
+    // Near any of the 4 edges?
+    return Math.abs(x - left) <= thresholdPx ||
+           Math.abs(x - right) <= thresholdPx ||
+           Math.abs(y - top) <= thresholdPx ||
+           Math.abs(y - bottom) <= thresholdPx;
+  }
+
+  // Edge-only dragging: filter rect can be moved by grabbing its edges at any time
   let rectDragging = false;
   let rectDragStart = null;
   let cornerDragging = false;
+  const mapContainer = map.getContainer();
 
   [sw, ne, nw, se].forEach(m => {
     m.on('dragstart', () => { cornerDragging = true; });
     m.on('dragend', () => { setTimeout(() => { cornerDragging = false; }, 50); });
   });
 
-  bboxFilterRect.on('mousedown', (e) => {
+  // Capture-phase mousedown: intercepts before Leaflet when near a filter rect edge
+  mapContainer.addEventListener('mousedown', (e) => {
     if (cornerDragging) return;
-    L.DomEvent.stopPropagation(e);
-    rectDragging = true;
-    rectDragStart = e.latlng;
-    map.dragging.disable();
+    // Let corner marker clicks pass through — corners sit on edges
+    if (e.target.closest('.bbox-corner-marker')) return;
+    const rect = mapContainer.getBoundingClientRect();
+    const containerPoint = L.point(e.clientX - rect.left, e.clientY - rect.top);
+    const latlng = map.containerPointToLatLng(containerPoint);
+    if (isNearBboxEdge(latlng)) {
+      e.stopPropagation();
+      e.preventDefault();
+      rectDragging = true;
+      rectDragStart = latlng;
+      map.dragging.disable();
+      mapContainer.classList.add('bbox-edge-dragging');
+    }
+  }, true);
+
+  // DOM-level mousemove for cursor changes (fires even over interactive overlays)
+  let edgeHoverActive = false;
+  mapContainer.addEventListener('mousemove', (e) => {
+    if (rectDragging || cornerDragging) return;
+    // Don't override cursor when hovering corner markers
+    if (e.target.closest('.bbox-corner-marker')) {
+      if (edgeHoverActive) {
+        edgeHoverActive = false;
+        mapContainer.classList.remove('bbox-edge-hover');
+        for (const r of Object.values(bboxOverlayLayers)) {
+          if (r._path) r._path.style.cursor = '';
+        }
+      }
+      return;
+    }
+    const rect = mapContainer.getBoundingClientRect();
+    const containerPoint = L.point(e.clientX - rect.left, e.clientY - rect.top);
+    const latlng = map.containerPointToLatLng(containerPoint);
+    const nearEdge = isNearBboxEdge(latlng);
+    if (nearEdge !== edgeHoverActive) {
+      edgeHoverActive = nearEdge;
+      mapContainer.classList.toggle('bbox-edge-hover', nearEdge);
+      // Set inline cursor on overlay paths to guarantee override of their CSS
+      for (const r of Object.values(bboxOverlayLayers)) {
+        if (r._path) r._path.style.cursor = nearEdge ? 'move' : '';
+      }
+    }
   });
 
+  // Leaflet-level mousemove for drag movement (not blocked by bubblingMouseEvents)
   map.on('mousemove', (e) => {
     if (!rectDragging || !rectDragStart) return;
     const dlat = e.latlng.lat - rectDragStart.lat;
@@ -772,11 +845,24 @@ function initBboxFilterMap() {
     updateRectFromCorners();
   });
 
+  // End edge drag on mouseup
   map.on('mouseup', () => {
     if (rectDragging) {
       rectDragging = false;
       rectDragStart = null;
       map.dragging.enable();
+      mapContainer.classList.remove('bbox-edge-dragging');
+      applyBboxFromCorners();
+    }
+  });
+
+  // Backup: end drag if mouse leaves map container
+  document.addEventListener('mouseup', () => {
+    if (rectDragging) {
+      rectDragging = false;
+      rectDragStart = null;
+      map.dragging.enable();
+      mapContainer.classList.remove('bbox-edge-dragging');
       applyBboxFromCorners();
     }
   });
@@ -833,9 +919,9 @@ function resetBboxRect(viewExtent) {
   const [w, s, e, n] = bbox;
   bboxFilterRect.setBounds([[s, w], [n, e]]);
   bboxFilterRect.setStyle({
-    color: currentFilters.bbox ? '#0066cc' : '#666',
-    fillOpacity: currentFilters.bbox ? 0.15 : 0.05,
-    dashArray: currentFilters.bbox ? '5, 5' : '3, 3'
+    color: '#0066cc',
+    fillOpacity: 0.12,
+    dashArray: '5, 5'
   });
   bboxCornerMarkers.sw.setLatLng([s, w]);
   bboxCornerMarkers.ne.setLatLng([n, e]);
@@ -851,18 +937,22 @@ function updateBboxOverlays() {
   addBboxOverlays(bboxFilterMap);
 
   // Compute combined extent of visible overlays, pad it for the filter rect, and zoom to fit
-  // Skip auto-zoom when a bbox filter is active (user is editing the rectangle)
   const viewExtent = computeOverlayExtent() || dataBboxExtent;
-  if (!currentFilters.bbox) {
+  if (currentFilters.bbox) {
+    // Filter active — preserve the user's current map view and rect position
+    const center = bboxFilterMap.getCenter();
+    const zoom = bboxFilterMap.getZoom();
+    resetBboxRect(viewExtent);
+    bboxFilterMap.setView(center, zoom, { animate: false });
+  } else {
+    // No filter — zoom to fit all overlays and reset rect to full extent
     const paddedExtent = viewExtent ? padBbox(viewExtent) : null;
     if (paddedExtent) {
       const [pw, ps, pe, pn] = paddedExtent;
       bboxFilterMap.fitBounds([[ps, pw], [pn, pe]], { padding: [5, 5], animate: true });
     }
+    resetBboxRect(viewExtent);
   }
-
-  // Reset filter rect bounds, corner markers, and style to match view extent
-  resetBboxRect(viewExtent);
 
   // Update reset button and coords display
   const resetBtn = document.getElementById('bboxReset');
@@ -875,19 +965,20 @@ function addBboxOverlays(map) {
   bboxOverlayLayers = {};
 
   const overlayStyle = {
-    color: '#6b9fc8',
-    fillColor: '#6b9fc8',
-    fillOpacity: 0.10,
-    weight: 1.5,
+    color: '#9333ea',
+    fillColor: '#a855f7',
+    fillOpacity: 0.15,
+    weight: 2,
     interactive: true,
-    bubblingMouseEvents: false
+    bubblingMouseEvents: false,
+    className: 'bbox-overlay-clickable'
   };
 
   const highlightStyle = {
-    color: '#2563eb',
-    fillColor: '#2563eb',
-    fillOpacity: 0.18,
-    weight: 2.5
+    color: '#7e22ce',
+    fillColor: '#9333ea',
+    fillOpacity: 0.25,
+    weight: 3
   };
 
   function addOverlay(id, bbox, label) {
@@ -906,6 +997,15 @@ function addBboxOverlays(map) {
     rect.on('mouseout', () => {
       rect.setStyle(overlayStyle);
       highlightRow(id, false);
+    });
+    rect.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      if (!currentCollection) {
+        loadCollection(id);
+      } else {
+        const row = document.querySelector(`.file-item.file[data-item-id="${id}"] .file-row`);
+        if (row) row.click();
+      }
     });
   }
 
@@ -938,10 +1038,10 @@ function highlightOverlay(id, highlight) {
   const rect = bboxOverlayLayers[id];
   if (!rect) return;
   if (highlight) {
-    rect.setStyle({ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.18, weight: 2.5 });
+    rect.setStyle({ color: '#7e22ce', fillColor: '#9333ea', fillOpacity: 0.25, weight: 3 });
     rect.bringToFront();
   } else {
-    rect.setStyle({ color: '#6b9fc8', fillColor: '#6b9fc8', fillOpacity: 0.10, weight: 1.5 });
+    rect.setStyle({ color: '#9333ea', fillColor: '#a855f7', fillOpacity: 0.15, weight: 2 });
   }
 }
 
@@ -1457,6 +1557,7 @@ function renderItems() {
         // When expanding, load full item data and initialize map
         if (isExpanding) {
           await loadExpandedItemContent(metaEl, itemId);
+          row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
       }
     });

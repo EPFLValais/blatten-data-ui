@@ -851,27 +851,44 @@ a:hover {
   cursor: grabbing;
 }
 
-/* Make the bbox rectangle fill area show grab cursor */
-.bbox-map-container path.leaflet-interactive {
-  cursor: grab;
+/* Overlay rectangles: pointer cursor for click-to-navigate */
+path.bbox-overlay-clickable {
+  cursor: pointer !important;
 }
 
-.bbox-map-container path.leaflet-interactive:active {
-  cursor: grabbing;
+/* Near filter bbox edge: move cursor to show edge can be dragged */
+.bbox-map-container.bbox-edge-hover,
+.bbox-map-container.bbox-edge-hover.leaflet-grab {
+  cursor: move !important;
+}
+.bbox-map-container.bbox-edge-hover .leaflet-interactive {
+  cursor: move !important;
 }
 
-/* Corner markers - Leaflet wraps markers in a .leaflet-marker-icon element */
-.bbox-corner-marker {
+/* During edge drag: grabbing cursor */
+.bbox-map-container.bbox-edge-dragging,
+.bbox-map-container.bbox-edge-dragging.leaflet-grab,
+.bbox-map-container.bbox-edge-dragging .leaflet-interactive {
+  cursor: grabbing !important;
+}
+
+/* Corner markers - always show resize cursor, even during edge hover */
+.bbox-corner-marker,
+.bbox-edge-hover .bbox-corner-marker,
+.bbox-edge-dragging .bbox-corner-marker {
   cursor: move !important;
   pointer-events: auto !important;
-  position: relative;
   z-index: 10000 !important;
 }
 
-.bbox-corner-marker-sw { cursor: nesw-resize !important; }
-.bbox-corner-marker-ne { cursor: nesw-resize !important; }
-.bbox-corner-marker-nw { cursor: nwse-resize !important; }
-.bbox-corner-marker-se { cursor: nwse-resize !important; }
+.bbox-corner-marker-sw,
+.bbox-edge-hover .bbox-corner-marker-sw { cursor: nesw-resize !important; }
+.bbox-corner-marker-ne,
+.bbox-edge-hover .bbox-corner-marker-ne { cursor: nesw-resize !important; }
+.bbox-corner-marker-nw,
+.bbox-edge-hover .bbox-corner-marker-nw { cursor: nwse-resize !important; }
+.bbox-corner-marker-se,
+.bbox-edge-hover .bbox-corner-marker-se { cursor: nwse-resize !important; }
 
 .filter-toggle-btn {
   display: flex;
@@ -1781,11 +1798,6 @@ a:hover {
 
 .logo-epfl-alpole a:last-child img {
   height: 12px;
-}
-
-/* Albert Lück Stiftung */
-.attribution-row .logo-albert-lueck img {
-  height: 22px;
 }
 
 /* Footer */
