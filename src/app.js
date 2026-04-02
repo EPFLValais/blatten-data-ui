@@ -30,6 +30,8 @@ let bboxOverlayLayers = {};    // Maps collection/item id → Leaflet rectangle 
 let bboxOverlayGroup = null;   // Leaflet layer group for overlays (rendered below filter rect)
 let bboxCornerMarkers = null;  // { sw, ne, nw, se } draggable corner markers
 let bboxMapRight = null;       // Persistent right-column DOM element (survives re-renders)
+let bboxEdgeDragging = false;  // True while edge-dragging the filter rect
+let cornerDragging = false;    // True while corner-marker dragging the filter rect
 let visibleCollections = [];   // Filtered collections currently shown in the list (used by map overlays)
 
 // History API integration for back button navigation
@@ -487,7 +489,10 @@ function updateBreadcrumb() {
     initBboxFilterMap();
     initBboxControls();
   } else {
-    updateBboxOverlays();
+    // Don't zoom here when loading a collection - loadCollection will zoom after items are loaded
+    if (!currentCollection) {
+      updateBboxOverlays();
+    }
   }
 }
 
@@ -650,6 +655,8 @@ function initBboxFilterMap() {
 
   // Click outside the filter rect clears an active bbox filter
   map.on('click', (e) => {
+    // Don't clear if we're in the middle of a drag operation
+    if (bboxEdgeDragging || cornerDragging) return;
     if (!currentFilters.bbox) return;
     if (!bboxFilterRect.getBounds().contains(e.latlng)) {
       currentFilters.bbox = null;
@@ -775,9 +782,7 @@ function initBboxFilterMap() {
   }
 
   // Edge-only dragging: filter rect can be moved by grabbing its edges at any time
-  let rectDragging = false;
   let rectDragStart = null;
-  let cornerDragging = false;
   const mapContainer = map.getContainer();
 
   [sw, ne, nw, se].forEach(m => {
@@ -790,13 +795,15 @@ function initBboxFilterMap() {
     if (cornerDragging) return;
     // Let corner marker clicks pass through — corners sit on edges
     if (e.target.closest('.bbox-corner-marker')) return;
+    // Let overlay clicks pass through — they should trigger zoom-to-bbox
+    if (e.target.closest('.bbox-overlay-clickable')) return;
     const rect = mapContainer.getBoundingClientRect();
     const containerPoint = L.point(e.clientX - rect.left, e.clientY - rect.top);
     const latlng = map.containerPointToLatLng(containerPoint);
     if (isNearBboxEdge(latlng)) {
       e.stopPropagation();
       e.preventDefault();
-      rectDragging = true;
+      bboxEdgeDragging = true;
       rectDragStart = latlng;
       map.dragging.disable();
       mapContainer.classList.add('bbox-edge-dragging');
@@ -806,7 +813,7 @@ function initBboxFilterMap() {
   // DOM-level mousemove for cursor changes (fires even over interactive overlays)
   let edgeHoverActive = false;
   mapContainer.addEventListener('mousemove', (e) => {
-    if (rectDragging || cornerDragging) return;
+    if (bboxEdgeDragging || cornerDragging) return;
     // Don't override cursor when hovering corner markers
     if (e.target.closest('.bbox-corner-marker')) {
       if (edgeHoverActive) {
@@ -834,7 +841,7 @@ function initBboxFilterMap() {
 
   // Leaflet-level mousemove for drag movement (not blocked by bubblingMouseEvents)
   map.on('mousemove', (e) => {
-    if (!rectDragging || !rectDragStart) return;
+    if (!bboxEdgeDragging || !rectDragStart) return;
     const dlat = e.latlng.lat - rectDragStart.lat;
     const dlng = e.latlng.lng - rectDragStart.lng;
     rectDragStart = e.latlng;
@@ -847,23 +854,23 @@ function initBboxFilterMap() {
 
   // End edge drag on mouseup
   map.on('mouseup', () => {
-    if (rectDragging) {
-      rectDragging = false;
+    if (bboxEdgeDragging) {
       rectDragStart = null;
       map.dragging.enable();
       mapContainer.classList.remove('bbox-edge-dragging');
       applyBboxFromCorners();
+      setTimeout(() => { bboxEdgeDragging = false; }, 150);
     }
   });
 
   // Backup: end drag if mouse leaves map container
   document.addEventListener('mouseup', () => {
-    if (rectDragging) {
-      rectDragging = false;
+    if (bboxEdgeDragging) {
       rectDragStart = null;
       map.dragging.enable();
       mapContainer.classList.remove('bbox-edge-dragging');
       applyBboxFromCorners();
+      setTimeout(() => { bboxEdgeDragging = false; }, 150);
     }
   });
 
@@ -914,6 +921,7 @@ function computeOverlayExtent() {
 // viewExtent is the default extent when no bbox filter is active (e.g. item-level extent).
 function resetBboxRect(viewExtent) {
   if (!bboxFilterRect || !bboxCornerMarkers || !dataBboxExtent) return;
+  if (bboxEdgeDragging || cornerDragging) return;
   const fallback = padBbox(viewExtent || dataBboxExtent);
   const bbox = currentFilters.bbox || fallback;
   const [w, s, e, n] = bbox;
@@ -932,24 +940,30 @@ function resetBboxRect(viewExtent) {
 // Refresh overlays on the existing map (called when data changes but map persists)
 function updateBboxOverlays() {
   if (!bboxFilterMap) return;
+  if (bboxEdgeDragging || cornerDragging) return;
   // Clear old overlays from the dedicated layer group
   if (bboxOverlayGroup) bboxOverlayGroup.clearLayers();
   addBboxOverlays(bboxFilterMap);
 
-  // Compute combined extent of visible overlays, pad it for the filter rect, and zoom to fit
   const viewExtent = computeOverlayExtent() || dataBboxExtent;
+  const paddedExtent = viewExtent ? padBbox(viewExtent) : null;
+  
   if (currentFilters.bbox) {
-    // Filter active — preserve the user's current map view and rect position
-    const center = bboxFilterMap.getCenter();
-    const zoom = bboxFilterMap.getZoom();
-    resetBboxRect(viewExtent);
-    bboxFilterMap.setView(center, zoom, { animate: false });
-  } else {
-    // No filter — zoom to fit all overlays and reset rect to full extent
-    const paddedExtent = viewExtent ? padBbox(viewExtent) : null;
+    // Filter active — zoom to fit items but keep rect at user's filter position
     if (paddedExtent) {
       const [pw, ps, pe, pn] = paddedExtent;
       bboxFilterMap.fitBounds([[ps, pw], [pn, pe]], { padding: [5, 5], animate: true });
+    }
+    // Don't reset rect; it stays where the user placed it
+  } else {
+    // No filter — zoom to fit all overlays and reset rect to full extent
+    if (paddedExtent) {
+      const [pw, ps, pe, pn] = paddedExtent;
+      // Invalidate size first to ensure map is ready
+      bboxFilterMap.invalidateSize();
+      setTimeout(() => {
+        bboxFilterMap.fitBounds([[ps, pw], [pn, pe]], { padding: [5, 5], animate: true });
+      }, 50);
     }
     resetBboxRect(viewExtent);
   }
@@ -1047,6 +1061,9 @@ function highlightOverlay(id, highlight) {
 
 // Apply server-side filters with debounce
 function applyServerFiltersDebounced(immediate = false) {
+  clearTimeout(serverFilterDebounceTimer);
+  serverFilterDebounceTimer = null;
+
   const doFilter = async () => {
     await applyServerFilters();
   };
@@ -1054,7 +1071,6 @@ function applyServerFiltersDebounced(immediate = false) {
   if (immediate) {
     doFilter();
   } else {
-    clearTimeout(serverFilterDebounceTimer);
     serverFilterDebounceTimer = setTimeout(doFilter, 300);
   }
 }
@@ -1126,9 +1142,9 @@ async function applyServerFilters() {
   const searchValue = currentFilters.search;
 
   if (currentCollection) {
-    await loadCollection(currentCollection);
+    await loadCollection(currentCollection, true);
   } else {
-    await loadCollections();
+    await loadCollections(false);
   }
 
   // Restore focus after re-render
