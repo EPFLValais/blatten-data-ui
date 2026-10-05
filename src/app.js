@@ -33,6 +33,7 @@ let bboxMapRight = null;       // Persistent right-column DOM element (survives 
 let bboxEdgeDragging = false;  // True while edge-dragging the filter rect
 let cornerDragging = false;    // True while corner-marker dragging the filter rect
 let visibleCollections = [];   // Filtered collections currently shown in the list (used by map overlays)
+let loadSeq = 0;               // Latest list load; responses from older loads are dropped
 
 // History API integration for back button navigation
 function pushHistoryState(collectionId = null, expandedItem = null) {
@@ -274,10 +275,30 @@ function getCollectionIcon(collectionId) {
   return '';
 }
 
+function escapeAttr(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+// Focus, text and cursor of the search box, read from the live element
+function captureSearchState() {
+  const input = document.getElementById('searchFilter');
+  if (!input || document.activeElement !== input) return null;
+  return { value: input.value, start: input.selectionStart, end: input.selectionEnd };
+}
+
+function restoreSearchState(state) {
+  const input = document.getElementById('searchFilter');
+  if (!state || !input) return;
+  input.value = state.value;
+  input.focus();
+  input.setSelectionRange(state.start, state.end);
+}
+
 // Update breadcrumb and filters
 function updateBreadcrumb() {
   const breadcrumb = document.getElementById('fileBreadcrumb');
   breadcrumb.style.display = 'flex';
+  const searchState = captureSearchState();
 
   // Build dropdown options
   const sensorOptions = allSensors.map(s =>
@@ -315,7 +336,7 @@ function updateBreadcrumb() {
         </div>
         <div class="filter-row">
           <div class="search-input-wrapper">
-            <input type="text" id="searchFilter" placeholder="Search..." value="${currentFilters.search}">
+            <input type="text" id="searchFilter" placeholder="Search..." value="${escapeAttr(currentFilters.search)}">
             <button class="search-clear-btn" id="searchClearBtn" style="display: ${currentFilters.search ? 'flex' : 'none'};" title="Clear search">&times;</button>
           </div>
           <select id="sensorFilter">
@@ -494,6 +515,8 @@ function updateBreadcrumb() {
       updateBboxOverlays();
     }
   }
+
+  restoreSearchState(searchState);
 }
 
 // Update the bbox coordinate display and edit inputs from current filter state
@@ -1078,26 +1101,10 @@ function applyServerFiltersDebounced(immediate = false) {
 // Apply filters to current view (with debounce for search)
 function applyFilters(immediate = false) {
   const doFilter = () => {
-    // Save focus state right before re-render
-    const searchInput = document.getElementById('searchFilter');
-    const wasSearchFocused = searchInput && document.activeElement === searchInput;
-    const cursorPosition = searchInput ? searchInput.selectionStart : 0;
-    const searchValue = currentFilters.search;
-
     if (currentCollection) {
       renderItems();
     } else {
       renderCollections();
-    }
-
-    // Restore focus after re-render
-    if (wasSearchFocused) {
-      const newSearchInput = document.getElementById('searchFilter');
-      if (newSearchInput) {
-        newSearchInput.value = searchValue; // Ensure value is preserved
-        newSearchInput.focus();
-        newSearchInput.setSelectionRange(cursorPosition, cursorPosition);
-      }
     }
   };
 
@@ -1135,26 +1142,10 @@ function buildFilterParams() {
 
 // Apply server-side filters (re-fetches data)
 async function applyServerFilters() {
-  // Save focus state before re-render
-  const searchInput = document.getElementById('searchFilter');
-  const wasSearchFocused = searchInput && document.activeElement === searchInput;
-  const cursorPosition = searchInput ? searchInput.selectionStart : 0;
-  const searchValue = currentFilters.search;
-
   if (currentCollection) {
     await loadCollection(currentCollection, true);
   } else {
     await loadCollections(false);
-  }
-
-  // Restore focus after re-render
-  if (wasSearchFocused) {
-    const newSearchInput = document.getElementById('searchFilter');
-    if (newSearchInput) {
-      newSearchInput.value = searchValue;
-      newSearchInput.focus();
-      newSearchInput.setSelectionRange(cursorPosition, cursorPosition);
-    }
   }
 }
 
@@ -1287,6 +1278,7 @@ async function loadCollection(collectionId, pushHistory = true) {
   const container = document.getElementById('fileList');
   container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading items...</div>';
 
+  const seq = ++loadSeq;
   try {
     const params = buildFilterParams();
     params.set('limit', '10000');
@@ -1294,6 +1286,7 @@ async function loadCollection(collectionId, pushHistory = true) {
     if (!response.ok) throw new Error('Failed to load items');
 
     const data = await response.json();
+    if (seq !== loadSeq) return;
     items = data.features || [];
     totalItemCount = data.numberMatched || items.length;
 
@@ -1734,6 +1727,7 @@ async function loadCollections(pushHistory = false) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading collections...</div>';
   document.getElementById('error').style.display = 'none';
 
+  const seq = ++loadSeq;
   try {
     // Fetch collections and filtered items in parallel
     // Also fetch unfiltered items on first load to populate filter dropdowns
@@ -1759,6 +1753,7 @@ async function loadCollections(pushHistory = false) {
     if (!collectionsRes.ok) throw new Error('Failed to load STAC collections');
 
     const collectionsData = await collectionsRes.json();
+    if (seq !== loadSeq) return;
     collections = collectionsData.collections || [];
 
     // Compute overall date range and spatial extent from collection extents
@@ -1806,6 +1801,7 @@ async function loadCollections(pushHistory = false) {
     // Extract per-collection mappings from filtered items
     if (itemsRes.ok) {
       const itemsData = await itemsRes.json();
+      if (seq !== loadSeq) return;
       sensorsByCollection = {};
       sourcesByCollection = {};
       processingLevelsByCollection = {};
@@ -1865,6 +1861,7 @@ async function loadCollections(pushHistory = false) {
         }
       } catch (_) { /* ignore search errors */ }
     }
+    if (seq !== loadSeq) return;
 
     // Sort collections by title
     collections.sort((a, b) => (a.title || a.id).localeCompare(b.title || b.id));
