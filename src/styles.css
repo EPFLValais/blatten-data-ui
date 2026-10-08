@@ -198,11 +198,6 @@ a:hover {
   margin-bottom: 0;
 }
 
-.section-content .filename {
-  color: #888;
-  font-size: 0.85rem;
-}
-
 /* Collapsible section */
 .collapsible-header {
   display: flex;
