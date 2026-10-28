@@ -1,0 +1,66 @@
+{
+  "realm": "EPFL",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "roles": {
+    "client": {
+      "epfl-vs-blatten-data": [
+        { "name": "stats-viewer", "description": "May read the download statistics" }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "epfl-vs-blatten-data",
+      "name": "Blatten download statistics",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8888/stats"],
+      "webOrigins": ["http://localhost:8888"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "access.token.lifespan": "300"
+      },
+      "protocolMappers": [
+        {
+          "name": "epfl-vs-blatten-data audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "epfl-vs-blatten-data",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "blatten-admin",
+      "enabled": true,
+      "email": "blatten-admin@example.invalid",
+      "emailVerified": true,
+      "firstName": "Blatten",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "clientRoles": { "epfl-vs-blatten-data": ["stats-viewer"] }
+    },
+    {
+      "username": "blatten-guest",
+      "enabled": true,
+      "email": "blatten-guest@example.invalid",
+      "emailVerified": true,
+      "firstName": "Blatten",
+      "lastName": "Guest",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }]
+    }
+  ]
+}

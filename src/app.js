@@ -9,6 +9,7 @@ let sensorsByCollection = {}; // Maps collection ID to list of sensors in that c
 let allSources = [];
 let sourcesByCollection = {}; // Maps collection ID to list of sources in that collection
 let processingLevelsByCollection = {}; // Maps collection ID to list of processing levels
+let allProcessingLevels = [];
 let currentFilters = {
   search: '',           // client-side text filter
   sensor: '',           // existing
@@ -26,6 +27,7 @@ let bboxFilterRect = null; // Current bbox rectangle on the map
 let filterDebounceTimer = null;
 let serverFilterDebounceTimer = null;
 let currentExpandedItem = null; // Track currently expanded item for history
+let currentOpenDay = null;      // The day opened within the expanded series, for history
 let bboxOverlayLayers = {};    // Maps collection/item id → Leaflet rectangle for cross-highlighting
 let bboxOverlayGroup = null;   // Leaflet layer group for overlays (rendered below filter rect)
 let bboxCornerMarkers = null;  // { sw, ne, nw, se } draggable corner markers
@@ -35,29 +37,26 @@ let cornerDragging = false;    // True while corner-marker dragging the filter r
 let visibleCollections = [];   // Filtered collections currently shown in the list (used by map overlays)
 let loadSeq = 0;               // Latest list load; responses from older loads are dropped
 
-// History API integration for back button navigation
-function pushHistoryState(collectionId = null, expandedItem = null) {
-  const state = { collection: collectionId, expandedItem: expandedItem };
-  let url = '#';
-  if (collectionId) {
-    url = `#collection=${collectionId}`;
-    if (expandedItem) {
-      url += `&item=${expandedItem}`;
-    }
+// History API integration for back button navigation. The hash names the collection, the
+// expanded item and, within a series, the opened day.
+function historyUrl(collectionId, expandedItem, openDay) {
+  if (!collectionId) return '#';
+  let url = `#collection=${collectionId}`;
+  if (expandedItem) {
+    url += `&item=${expandedItem}`;
+    if (openDay) url += `&day=${openDay}`;
   }
-  history.pushState(state, '', url);
+  return url;
 }
 
-function replaceHistoryState(collectionId = null, expandedItem = null) {
-  const state = { collection: collectionId, expandedItem: expandedItem };
-  let url = '#';
-  if (collectionId) {
-    url = `#collection=${collectionId}`;
-    if (expandedItem) {
-      url += `&item=${expandedItem}`;
-    }
-  }
-  history.replaceState(state, '', url);
+function pushHistoryState(collectionId = null, expandedItem = null, openDay = null) {
+  const state = { collection: collectionId, expandedItem: expandedItem, openDay: openDay };
+  history.pushState(state, '', historyUrl(collectionId, expandedItem, openDay));
+}
+
+function replaceHistoryState(collectionId = null, expandedItem = null, openDay = null) {
+  const state = { collection: collectionId, expandedItem: expandedItem, openDay: openDay };
+  history.replaceState(state, '', historyUrl(collectionId, expandedItem, openDay));
 }
 
 // Collapse an item by ID (used by popstate handler)
@@ -74,11 +73,12 @@ function collapseItem(itemId) {
   }
   if (currentExpandedItem === itemId) {
     currentExpandedItem = null;
+    currentOpenDay = null;
   }
 }
 
-// Expand an item by ID (used by popstate handler and initial load)
-async function expandItemById(itemId) {
+// Expand an item by ID, and open one of its days (used by popstate handler and initial load)
+async function expandItemById(itemId, dayId = null) {
   const row = document.querySelector(`.file-item.file[data-item-id="${itemId}"]`);
   if (!row) return;
   const targetId = row.dataset.metaTarget;
@@ -94,6 +94,7 @@ async function expandItemById(itemId) {
 
   // Load map and assets (same logic as click handler)
   await loadExpandedItemContent(metaEl, itemId);
+  syncOpenDay(metaEl, dayId);
 }
 
 // Load mini map and file assets for an expanded item
@@ -104,51 +105,188 @@ async function loadExpandedItemContent(metaEl, itemId) {
     initMiniMap(miniMapEl);
   }
 
-  // Lazy load file assets
+  // Lazy load file assets, a page at a time
   const assetsContainer = metaEl.querySelector('.meta-assets-content');
-  if (assetsContainer && !assetsContainer._assetsLoaded) {
+  if (assetsContainer && !assetsContainer._pager) {
+    const collectionId = currentCollection;
+    const fileCount = Number(assetsContainer.dataset.fileCount);
+    const pager = createAssetPager(
+      (limit, offset) => fetchItemAssets(collectionId, itemId, limit, offset),
+      { total: fileCount > 0 ? fileCount : null }
+    );
+    assetsContainer._pager = pager;
     assetsContainer.innerHTML = '<div class="loading-assets"><div class="spinner"></div>Loading files...</div>';
     try {
-      const fullItem = await fetchItemAssets(currentCollection, itemId, 10000, 0);
-      if (fullItem && fullItem.assets) {
-        const archiveInfo = assetsContainer.dataset.archiveHref ? {
-          href: assetsContainer.dataset.archiveHref,
-          size: assetsContainer.dataset.archiveSize,
-          zip64: assetsContainer.dataset.archiveZip64 === '1'
-        } : null;
-        assetsContainer.innerHTML = renderItemAssets(fullItem.assets, archiveInfo);
-        assetsContainer._assetsLoaded = true;
-
-        // Set up file group toggle handlers
-        assetsContainer.querySelectorAll('.file-group-header').forEach(header => {
-          header.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const content = document.getElementById(header.dataset.target);
-            if (content) {
-              header.classList.toggle('expanded');
-              content.classList.toggle('expanded');
-            }
-          });
-        });
-
-        // Set up "show more files" handlers
-        assetsContainer.querySelectorAll('.show-more-files').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const moreContent = document.getElementById(btn.dataset.moreId);
-            if (moreContent) {
-              moreContent.style.display = '';
-              btn.remove();
-            }
-          });
-        });
-      } else {
-        assetsContainer.innerHTML = '<div class="empty">No files found</div>';
-        assetsContainer._assetsLoaded = true;
-      }
+      await pager.next();
+      renderAssetPages(assetsContainer, itemId);
     } catch (err) {
+      assetsContainer._pager = null;
       assetsContainer.innerHTML = `<div class="error-msg">Failed to load files: ${err.message}</div>`;
     }
+  }
+
+  const daysContainer = metaEl.querySelector('.meta-days-content');
+  if (daysContainer && !daysContainer._pager) {
+    await loadDayList(daysContainer, itemId);
+  }
+}
+
+// List a series' days a page at a time, within the current date filter
+async function loadDayList(daysContainer, itemId) {
+  const itemsPath = `${STAC_API}/collections/${currentCollection}/items`;
+  const url = daysUrl({ href: daysContainer.dataset.daysHref }, itemsPath, buildFilterParams());
+  const pager = createDayPager(fetchJson, url, itemsPath);
+  daysContainer._pager = pager;
+  daysContainer.innerHTML = '<div class="loading-assets"><div class="spinner"></div>Loading days...</div>';
+  try {
+    await pager.next();
+    renderDayPages(daysContainer, itemId);
+  } catch (err) {
+    daysContainer._pager = null;
+    daysContainer.innerHTML = `<div class="error-msg">Failed to load days: ${err.message}</div>`;
+  }
+}
+
+// Render the days loaded so far, keeping the opened day's files under its row
+function renderDayPages(daysContainer, itemId) {
+  const pager = daysContainer._pager;
+  const openPanel = daysContainer.querySelector('.day-files');
+  daysContainer.innerHTML = renderDayList(pager);
+
+  daysContainer.querySelectorAll('.day-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const dayId = row.dataset.dayId;
+      if (currentOpenDay === dayId) {
+        closeDay(daysContainer);
+        pushHistoryState(currentCollection, itemId, null);
+      } else {
+        openDay(daysContainer, dayId);
+        pushHistoryState(currentCollection, itemId, dayId);
+      }
+    });
+  });
+  if (openPanel) placeDayPanel(daysContainer, openPanel);
+
+  const more = daysContainer.querySelector('.show-more-days');
+  if (more) {
+    const btn = more.querySelector('button');
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      btn.disabled = true;
+      btn.textContent = 'Loading days...';
+      try {
+        await pager.next();
+        renderDayPages(daysContainer, itemId);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = `Failed to load days: ${err.message}. Try again`;
+      }
+    });
+  }
+}
+
+// Put a day's file panel under its row, or above the rows when the row is not loaded
+function placeDayPanel(daysContainer, panel) {
+  const row = daysContainer.querySelector(`.day-row[data-day-id="${panel.dataset.dayId}"]`);
+  daysContainer.querySelectorAll('.day-row.expanded').forEach(r => r.classList.remove('expanded'));
+  if (row) {
+    row.classList.add('expanded');
+    row.after(panel);
+  } else {
+    (daysContainer.querySelector('.day-rows') || daysContainer).prepend(panel);
+  }
+}
+
+// Open a day of the expanded series and list its files
+async function openDay(daysContainer, dayId) {
+  closeDay(daysContainer);
+  currentOpenDay = dayId;
+  const panel = document.createElement('div');
+  panel.className = 'day-files';
+  panel.dataset.dayId = dayId;
+  placeDayPanel(daysContainer, panel);
+
+  const collectionId = currentCollection;
+  const day = daysContainer._pager?.days.find(d => d.id === dayId);
+  const fileCount = Number(day?.properties?.['blatten:file_count']);
+  panel._pager = createAssetPager(
+    (limit, offset) => fetchItemAssets(collectionId, dayId, limit, offset),
+    { total: fileCount > 0 ? fileCount : null }
+  );
+  panel.innerHTML = '<div class="loading-assets"><div class="spinner"></div>Loading files...</div>';
+  try {
+    await panel._pager.next();
+    if (panel.isConnected) renderAssetPages(panel, dayId);
+  } catch (err) {
+    panel.innerHTML = `<div class="error-msg">Failed to load files: ${err.message}</div>`;
+  }
+}
+
+function closeDay(daysContainer) {
+  daysContainer.querySelectorAll('.day-files').forEach(panel => panel.remove());
+  daysContainer.querySelectorAll('.day-row.expanded').forEach(r => r.classList.remove('expanded'));
+  currentOpenDay = null;
+}
+
+// Open or close days so the expanded series shows `dayId`, or no day when null
+function syncOpenDay(metaEl, dayId) {
+  const daysContainer = metaEl?.querySelector('.meta-days-content');
+  if (!daysContainer || dayId === currentOpenDay) return;
+  if (dayId) openDay(daysContainer, dayId);
+  else closeDay(daysContainer);
+}
+
+// Render the pages loaded so far into an item's file list, keeping open groups open
+function renderAssetPages(assetsContainer, itemId) {
+  const pager = assetsContainer._pager;
+  if (Object.keys(pager.assets).length === 0) {
+    assetsContainer.innerHTML = '<div class="empty">No files found</div>';
+    return;
+  }
+  const archive = assetsContainer.dataset.archiveHref ? {
+    href: assetsContainer.dataset.archiveHref,
+    size: assetsContainer.dataset.archiveSize,
+    zip64: assetsContainer.dataset.archiveZip64 === '1'
+  } : null;
+  const openGroups = new Set(
+    [...assetsContainer.querySelectorAll('.file-group-header.expanded')].map(h => h.dataset.ext)
+  );
+  assetsContainer.innerHTML = renderItemAssets(pager, {
+    archive,
+    idPrefix: 'file-group-' + itemId.replace(/[^a-zA-Z0-9]/g, '-')
+  });
+
+  assetsContainer.querySelectorAll('.file-group-header').forEach(header => {
+    const content = document.getElementById(header.dataset.target);
+    if (openGroups.has(header.dataset.ext) && content) {
+      header.classList.add('expanded');
+      content.classList.add('expanded');
+    }
+    header.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (content) {
+        header.classList.toggle('expanded');
+        content.classList.toggle('expanded');
+      }
+    });
+  });
+
+  const more = assetsContainer.querySelector('.show-more-assets');
+  if (more) {
+    const btn = more.querySelector('button');
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      btn.disabled = true;
+      btn.textContent = 'Loading files...';
+      try {
+        await pager.next();
+        renderAssetPages(assetsContainer, itemId);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = `Failed to load files: ${err.message}. Try again`;
+      }
+    });
   }
 }
 
@@ -156,6 +294,7 @@ async function loadExpandedItemContent(metaEl, itemId) {
 window.addEventListener('popstate', (event) => {
   const collectionId = event.state?.collection || null;
   const expandedItem = event.state?.expandedItem || null;
+  const openDayId = event.state?.openDay || null;
 
   // Same collection - handle item expansion/collapse
   if (collectionId === currentCollection && collectionId !== null) {
@@ -167,7 +306,11 @@ window.addEventListener('popstate', (event) => {
       if (currentExpandedItem) {
         collapseItem(currentExpandedItem);
       }
-      expandItemById(expandedItem);
+      expandItemById(expandedItem, openDayId);
+    } else if (expandedItem) {
+      // Same series - open or close a day
+      const row = document.querySelector(`.file-item.file[data-item-id="${expandedItem}"]`);
+      syncOpenDay(row && document.getElementById(row.dataset.metaTarget), openDayId);
     }
     return;
   }
@@ -180,6 +323,7 @@ window.addEventListener('popstate', (event) => {
     // Go back to collections list without pushing new history
     currentCollection = null;
     currentExpandedItem = null;
+    currentOpenDay = null;
     // Preserve current filters when navigating back
     loadCollections(false);
   }
@@ -188,7 +332,7 @@ window.addEventListener('popstate', (event) => {
 // Parse initial URL hash on page load
 function parseHash() {
   const hash = window.location.hash;
-  const result = { collection: null, item: null };
+  const result = { collection: null, item: null, day: null };
 
   const collectionMatch = hash.match(/collection=([^&]+)/);
   if (collectionMatch) {
@@ -200,15 +344,20 @@ function parseHash() {
     result.item = decodeURIComponent(itemMatch[1]);
   }
 
+  const dayMatch = hash.match(/day=([^&]+)/);
+  if (dayMatch) {
+    result.day = decodeURIComponent(dayMatch[1]);
+  }
+
   return result;
 }
 
 // Initialize with proper history state
 async function initializeApp() {
-  const { collection: initialCollection, item: initialItem } = parseHash();
+  const { collection: initialCollection, item: initialItem, day: initialDay } = parseHash();
 
   // Set initial history state (replace, don't push)
-  replaceHistoryState(initialCollection, initialItem);
+  replaceHistoryState(initialCollection, initialItem, initialDay);
 
   if (initialCollection) {
     // Load collections first (to populate filters), then load the specific collection
@@ -217,7 +366,7 @@ async function initializeApp() {
 
     // If there's an initial item to expand, expand it now (DOM is ready after loadCollection)
     if (initialItem) {
-      await expandItemById(initialItem);
+      await expandItemById(initialItem, initialDay);
     }
   } else {
     await loadCollections(false);
@@ -309,7 +458,7 @@ function updateBreadcrumb() {
     `<option value="${s}" ${currentFilters.source === s ? 'selected' : ''}>${s}</option>`
   ).join('');
 
-  const processingLevelOptions = ['1', '2', '3', '4'].map(level =>
+  const processingLevelOptions = allProcessingLevels.map(level =>
     `<option value="${level}" ${currentFilters.processingLevel === level ? 'selected' : ''}>Level ${level}</option>`
   ).join('');
 
@@ -414,6 +563,7 @@ function updateBreadcrumb() {
       pushHistoryState(null, null);
       currentCollection = null;
       currentExpandedItem = null;
+      currentOpenDay = null;
       loadCollections(false);
     });
   }
@@ -1270,6 +1420,7 @@ function renderCollections() {
 async function loadCollection(collectionId, pushHistory = true) {
   currentCollection = collectionId;
   currentExpandedItem = null; // Reset expanded item when changing collections
+  currentOpenDay = null;
   if (pushHistory) {
     pushHistoryState(collectionId, null);
   }
@@ -1279,27 +1430,42 @@ async function loadCollection(collectionId, pushHistory = true) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading items...</div>';
 
   const seq = ++loadSeq;
+  const itemsPath = `${STAC_API}/collections/${collectionId}/items`;
   try {
+    // A text match on a day lists its series: the matches are read across all levels first,
+    // then the series level is kept to the series they belong to.
+    let matchedSeries = null;
     const params = buildFilterParams();
-    params.set('limit', '10000');
-    const response = await fetch(`${STAC_API}/collections/${collectionId}/items?${params}`);
-    if (!response.ok) throw new Error('Failed to load items');
+    if (currentFilters.search) {
+      const matches = await fetchAllPages(fetchJson, itemsPath, buildFilterParams(), () => seq === loadSeq);
+      if (matches === null) return;
+      matchedSeries = seriesKeys(matches);
+      params.delete('q');
+    }
 
-    const data = await response.json();
-    if (seq !== loadSeq) return;
-    items = data.features || [];
-    totalItemCount = data.numberMatched || items.length;
-
-    document.getElementById('fileCount').textContent = `(${totalItemCount} item${totalItemCount !== 1 ? 's' : ''})`;
+    items = [];
+    const listed = await fetchAllPages(fetchJson, itemsPath, seriesLevel(params), (features, page) => {
+      if (seq !== loadSeq) return false;
+      items.push(...(matchedSeries ? features.filter(f => matchedSeries.has(f.id)) : features));
+      totalItemCount = matchedSeries ? items.length : (page.numberMatched ?? items.length);
+      document.getElementById('fileCount').textContent = `(${totalItemCount} item${totalItemCount !== 1 ? 's' : ''})`;
+      renderItems();
+    });
+    if (listed === null) return;
 
     // Refresh bbox overlays now that items are loaded
     updateBboxOverlays();
-
-    renderItems();
   } catch (err) {
+    if (seq !== loadSeq) return;
     console.error('Failed to load items:', err);
     container.innerHTML = '<div class="error-msg">Unable to load items. Please try again later.</div>';
   }
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to load ${url}`);
+  return response.json();
 }
 
 // Fetch item details with paginated assets
@@ -1307,134 +1473,6 @@ async function fetchItemAssets(collectionId, itemId, limit = 20, offset = 0) {
   const response = await fetch(`${STAC_API}/collections/${collectionId}/items/${itemId}?asset_limit=${limit}&asset_offset=${offset}`);
   if (!response.ok) throw new Error('Failed to load item details');
   return response.json();
-}
-
-// Get file extension from href or title
-function getExtension(href, title) {
-  const str = href || title || '';
-  const match = str.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
-  return match ? match[1].toUpperCase() : '';
-}
-
-// Render assets list as collapsible file groups
-// Takes item.assets object (new STAC structure where files are assets, not child items)
-function renderItemAssets(assets, archiveInfo) {
-  if (!assets) {
-    return '<div class="empty">No files found</div>';
-  }
-
-  // Separate archive from file assets
-  const fileAssets = Object.entries(assets)
-    .filter(([key]) => key !== 'archive')
-    .map(([key, asset]) => ({ key, ...asset }));
-
-  if (fileAssets.length === 0) {
-    return '<div class="empty">No individual files found</div>';
-  }
-
-  // Group by extension
-  const byExtension = {};
-  fileAssets.forEach(asset => {
-    const ext = getExtension(asset.href, asset.title) || 'OTHER';
-    if (!byExtension[ext]) byExtension[ext] = [];
-    byExtension[ext].push(asset);
-  });
-
-  // Sort groups by count (largest first), then sort files within each group
-  const sortedGroups = Object.entries(byExtension)
-    .sort((a, b) => b[1].length - a[1].length)
-    .map(([ext, assets]) => [ext, assets.sort((a, b) => {
-      const titleA = a.title || a.key;
-      const titleB = b.title || b.key;
-      return titleA.localeCompare(titleB);
-    })]);
-
-  // Calculate totals
-  const totalSize = fileAssets.reduce((sum, asset) => sum + (asset['file:size'] || 0), 0);
-  // Count assets with LV95 projection data (proj:bbox indicates per-asset geometry)
-  const withGeo = fileAssets.filter(asset => asset['proj:bbox'] != null).length;
-
-  let html = `
-    <div class="files-header">
-      <span class="files-count">${fileAssets.length} files</span>
-      ${totalSize > 0 ? `<span class="files-size">${formatSize(totalSize)}</span>` : ''}
-      ${withGeo > 0 ? `<span class="files-geo" title="${withGeo} files with LV95 coordinates">${withGeo} with coordinates</span>` : ''}
-      ${archiveInfo ? `<a href="${archiveInfo.href}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${archiveInfo.size})</a>${archiveInfo.zip64 ? '<span class="archive-note" title="This archive uses ZIP64 extensions. The built-in Archive Utility on macOS may not extract it correctly — use The Unarchiver, 7-Zip, or the command-line unzip tool instead.">ZIP64</span>' : ''}` : ''}
-    </div>
-  `;
-
-  // Render collapsible groups
-  sortedGroups.forEach(([ext, assets], groupIndex) => {
-    const groupSize = assets.reduce((sum, asset) => sum + (asset['file:size'] || 0), 0);
-    const groupId = `file-group-${Date.now()}-${groupIndex}`;
-
-    html += `
-      <div class="file-group">
-        <div class="file-group-header" data-target="${groupId}">
-          <span class="file-group-toggle">▶</span>
-          <span class="file-group-ext">${ext}</span>
-          <span class="file-group-badge">${assets.length}</span>
-          <span class="file-group-size">${formatSize(groupSize)}</span>
-        </div>
-        <div class="file-group-content" id="${groupId}">
-    `;
-
-    const INITIAL_FILES_LIMIT = 100;
-    const visibleAssets = assets.slice(0, INITIAL_FILES_LIMIT);
-    const hiddenAssets = assets.slice(INITIAL_FILES_LIMIT);
-
-    visibleAssets.forEach(asset => {
-      const title = asset.title || asset.key;
-      const size = asset['file:size'];
-      const datetime = asset.datetime;
-      const href = asset.href || '#';
-      // Check for projection extension (per-asset LV95 geometry)
-      const hasGeo = asset['proj:bbox'] != null;
-
-      // Format date if available
-      const dateStr = datetime ? formatDate(datetime) : '';
-
-      html += `
-        <a href="${href}" class="file-item asset-row" target="_blank" rel="noopener">
-          <span class="file-name">${title}</span>
-          <span class="asset-meta">
-            ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">LV95</span>' : ''}
-            ${size ? `<span class="asset-size">${formatSize(size)}</span>` : ''}
-            ${dateStr ? `<span class="asset-date">${dateStr}</span>` : ''}
-          </span>
-        </a>
-      `;
-    });
-
-    if (hiddenAssets.length > 0) {
-      const moreId = `file-more-${groupId}`;
-      html += `<div class="show-more-files" data-more-id="${moreId}"><button class="show-more-btn">Show ${hiddenAssets.length} more file${hiddenAssets.length !== 1 ? 's' : ''}...</button></div>`;
-      html += `<div class="file-more-content" id="${moreId}" style="display:none">`;
-      hiddenAssets.forEach(asset => {
-        const title = asset.title || asset.key;
-        const size = asset['file:size'];
-        const datetime = asset.datetime;
-        const href = asset.href || '#';
-        const hasGeo = asset['proj:bbox'] != null;
-        const dateStr = datetime ? formatDate(datetime) : '';
-        html += `
-          <a href="${href}" class="file-item asset-row" target="_blank" rel="noopener">
-            <span class="file-name">${title}</span>
-            <span class="asset-meta">
-              ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">LV95</span>' : ''}
-              ${size ? `<span class="asset-size">${formatSize(size)}</span>` : ''}
-              ${dateStr ? `<span class="asset-date">${dateStr}</span>` : ''}
-            </span>
-          </a>
-        `;
-      });
-      html += `</div>`;
-    }
-
-    html += `</div></div>`;
-  });
-
-  return html;
 }
 
 // Render items list
@@ -1478,6 +1516,9 @@ function renderItems() {
 
     // Archive download link
     const archiveHref = archiveAsset?.href || '#';
+
+    // A series lists its days beside its own files
+    const days = daysLink(item);
 
     return `
       <div class="file-item file" data-meta-target="${metaId}" data-item-id="${item.id}">
@@ -1524,9 +1565,17 @@ function renderItems() {
             ` : ''}
           </div>
           <div class="meta-assets">
-            <div class="meta-assets-content" data-archive-href="${archiveAsset ? archiveHref : ''}" data-archive-size="${archiveAsset ? formatSize(archiveAsset['file:size']) : ''}" data-archive-zip64="${archiveAsset?.['blatten:zip64'] ? '1' : ''}">
+            <div class="meta-assets-content" data-file-count="${props['blatten:file_count'] || ''}" data-archive-href="${archiveAsset ? archiveHref : ''}" data-archive-size="${archiveAsset ? formatSize(archiveAsset['file:size']) : ''}" data-archive-zip64="${archiveAsset?.['blatten:zip64'] ? '1' : ''}">
               <div class="assets-placeholder">Loading files...</div>
             </div>
+            ${days ? `
+            <div class="meta-days">
+              <div class="meta-days-title">Days</div>
+              <div class="meta-days-content" data-days-href="${escapeAttr(days.href)}">
+                <div class="assets-placeholder">Loading days...</div>
+              </div>
+            </div>
+            ` : ''}
           </div>
         </div>
       </div>
@@ -1557,9 +1606,11 @@ function renderItems() {
             collapseItem(currentExpandedItem);
           }
           currentExpandedItem = itemId;
+          currentOpenDay = null;
           pushHistoryState(currentCollection, itemId);
         } else {
           currentExpandedItem = null;
+          currentOpenDay = null;
           pushHistoryState(currentCollection, null);
         }
 
@@ -1729,27 +1780,7 @@ async function loadCollections(pushHistory = false) {
 
   const seq = ++loadSeq;
   try {
-    // Fetch collections and filtered items in parallel
-    // Also fetch unfiltered items on first load to populate filter dropdowns
-    // Use STAC Fields Extension to request only the fields needed for the collections list
-    const fieldsParam = 'collection,properties.blatten:sensor,properties.blatten:source,properties.blatten:processing_level,-geometry,-links';
-    const params = buildFilterParams();
-    params.set('limit', '1000');
-    params.set('fields', fieldsParam);
-    const needsFilterOptions = allSources.length === 0 && allSensors.length === 0;
-    const unfilteredParams = new URLSearchParams();
-    unfilteredParams.set('limit', '1000');
-    unfilteredParams.set('exclude_assets', 'true');
-    unfilteredParams.set('fields', fieldsParam);
-    const fetches = [
-      fetch(`${STAC_API}/collections`),
-      fetch(`${STAC_API}/search?${params}`),
-    ];
-    if (needsFilterOptions) {
-      fetches.push(fetch(`${STAC_API}/search?${unfilteredParams}`));
-    }
-    const [collectionsRes, itemsRes, unfilteredRes] = await Promise.all(fetches);
-
+    const collectionsRes = await fetch(`${STAC_API}/collections`);
     if (!collectionsRes.ok) throw new Error('Failed to load STAC collections');
 
     const collectionsData = await collectionsRes.json();
@@ -1783,82 +1814,43 @@ async function loadCollections(pushHistory = false) {
       }
     }
 
-    // Build filter dropdown options from unfiltered items (first load only)
-    if (needsFilterOptions && unfilteredRes?.ok) {
-      const allItemsData = await unfilteredRes.json();
-      const sensors = new Set();
-      const sources = new Set();
-      (allItemsData.features || []).forEach(item => {
-        const sensor = item.properties?.['blatten:sensor'];
-        const source = item.properties?.['blatten:source'];
-        if (sensor) sensors.add(sensor);
-        if (source) sources.add(source);
-      });
-      allSensors = [...sensors].sort();
-      allSources = [...sources].sort();
-    }
+    // Filter options and each collection's sensors, sources and levels, from the summaries
+    const options = filterOptionsFromSummaries(collections);
+    allSensors = options.sensors;
+    allSources = options.sources;
+    allProcessingLevels = options.processingLevels;
+    sensorsByCollection = options.sensorsByCollection;
+    sourcesByCollection = options.sourcesByCollection;
+    processingLevelsByCollection = options.processingLevelsByCollection;
 
-    // Extract per-collection mappings from filtered items
-    if (itemsRes.ok) {
-      const itemsData = await itemsRes.json();
-      if (seq !== loadSeq) return;
-      sensorsByCollection = {};
-      sourcesByCollection = {};
-      processingLevelsByCollection = {};
+    // Series-level items per collection under the current filters
+    const params = seriesLevel(buildFilterParams());
+    params.set('fields', 'collection,-geometry,-links,-bbox');
+    const listed = await fetchAllPages(fetchJson, `${STAC_API}/search`, params, () => seq === loadSeq);
+    if (listed === null) return;
+    const itemCountByCollection = {};
+    listed.forEach(item => {
+      if (item.collection) itemCountByCollection[item.collection] = (itemCountByCollection[item.collection] || 0) + 1;
+    });
+    collections.forEach(c => {
+      c._itemCount = itemCountByCollection[c.id] || 0;
+    });
 
-      const itemCountByCollection = {};
-      (itemsData.features || []).forEach(item => {
-        const sensor = item.properties?.['blatten:sensor'];
-        const source = item.properties?.['blatten:source'];
-        const processingLevel = item.properties?.['blatten:processing_level'];
-        const collectionId = item.collection;
-
-        if (collectionId) {
-          itemCountByCollection[collectionId] = (itemCountByCollection[collectionId] || 0) + 1;
-        }
-
-        if (sensor && collectionId) {
-          if (!sensorsByCollection[collectionId]) sensorsByCollection[collectionId] = [];
-          if (!sensorsByCollection[collectionId].includes(sensor)) sensorsByCollection[collectionId].push(sensor);
-        }
-
-        if (source && collectionId) {
-          if (!sourcesByCollection[collectionId]) sourcesByCollection[collectionId] = [];
-          if (!sourcesByCollection[collectionId].includes(source)) sourcesByCollection[collectionId].push(source);
-        }
-
-        if (processingLevel && collectionId) {
-          const levelStr = String(processingLevel);
-          if (!processingLevelsByCollection[collectionId]) processingLevelsByCollection[collectionId] = [];
-          if (!processingLevelsByCollection[collectionId].includes(levelStr)) processingLevelsByCollection[collectionId].push(levelStr);
-        }
-      });
-      collections.forEach(c => {
-        c._itemCount = itemCountByCollection[c.id] || 0;
-      });
-    }
-
-    // Cross-collection item search: when search text is active, find collections with matching items
+    // Cross-collection item search across all levels: a match on a day counts for its series,
+    // and a series counts once however many of its days match
     collections.forEach(c => { c._searchMatchCount = 0; });
     if (currentFilters.search) {
       try {
         const searchParams = new URLSearchParams();
         searchParams.set('q', currentFilters.search);
         searchParams.set('exclude_assets', 'true');
-        searchParams.set('fields', 'collection,-geometry,-links,-bbox');
-        searchParams.set('limit', '200');
-        const searchRes = await fetch(`${STAC_API}/search?${searchParams}`);
-        if (searchRes.ok) {
-          const searchData = await searchRes.json();
-          const matchCounts = {};
-          (searchData.features || []).forEach(item => {
-            const cid = item.collection;
-            if (cid) matchCounts[cid] = (matchCounts[cid] || 0) + 1;
-          });
-          collections.forEach(c => {
-            c._searchMatchCount = matchCounts[c.id] || 0;
-          });
-        }
+        searchParams.set('fields', 'collection,properties.blatten:series,-geometry,-links,-bbox');
+        const matches = await fetchAllPages(fetchJson, `${STAC_API}/search`, searchParams, () => seq === loadSeq);
+        if (matches === null) return;
+        const matchCounts = countSeriesMatches(matches);
+        collections.forEach(c => {
+          c._searchMatchCount = matchCounts[c.id] || 0;
+        });
       } catch (_) { /* ignore search errors */ }
     }
     if (seq !== loadSeq) return;

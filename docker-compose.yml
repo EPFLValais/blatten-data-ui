@@ -92,15 +92,81 @@ services:
       - STAC_CATALOG_DIR=/app/stac
       - PORT=3000
       - RUST_LOG=info,tower_http=debug
+      # Download statistics (development values)
+      - STATS_DATABASE_URL=postgres://stats:${STATS_DB_PASSWORD:-stats-local-development}@stats-db:5432/stats
+      # The API reads the proxy's metrics port itself every minute.
+      - STATS_SCRAPE_URL=http://s3proxy:9090/metrics
+      - STATS_SCRAPE_INTERVAL=60
+      - KEYCLOAK_URL=http://keycloak:8080/
+      - KEYCLOAK_BROWSER_URL=http://localhost:8180/
+      - KEYCLOAK_REALM=EPFL
+      - KEYCLOAK_CLIENT_ID=epfl-vs-blatten-data
+      - STATS_VIEWER_ROLE=stats-viewer
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      stats-db:
+        condition: service_healthy
     volumes:
       - ../blatten-data-api/src:/app/src
+      - ../blatten-data-api/migrations:/app/migrations:ro
       - ../blatten-data-api/stac:/app/stac:ro
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.stac.rule=PathPrefix(`/stac`)"
       - "traefik.http.routers.stac.entrypoints=web"
       - "traefik.http.routers.stac.priority=10"
+      - "traefik.http.routers.stats.rule=PathPrefix(`/stats`)"
+      - "traefik.http.routers.stats.entrypoints=web"
+      - "traefik.http.routers.stats.priority=10"
+      - "traefik.http.routers.stats.service=stac"
       - "traefik.http.services.stac.loadbalancer.server.port=3000"
+
+  # Download statistics are kept in Postgres. Port 5433 on this machine is for running the store's
+  # tests: STATS_TEST_DATABASE_URL=postgres://stats:stats-local-development@localhost:5433/stats_test
+  stats-db:
+    image: postgres:16-alpine
+    container_name: blatten-stats-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stats
+      POSTGRES_PASSWORD: ${STATS_DB_PASSWORD:-stats-local-development}
+      POSTGRES_DB: stats
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - stats-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Local identity provider for the statistics page: realm EPFL, client epfl-vs-blatten-data with the
+  # client role stats-viewer and an audience mapper, user blatten-admin (holds stats-viewer) and
+  # blatten-guest (no role), both with the password "password". The realm file is imported only at
+  # first start: after changing it, recreate the container (docker compose up -d --force-recreate
+  # keycloak).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: blatten-keycloak
+    command: start-dev --import-realm --health-enabled=true
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./keycloak-realm-dev.json:/opt/keycloak/data/import/realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
   ui:
     image: node:22-alpine
@@ -112,7 +178,11 @@ services:
     command: sh -c "npm install && npm run dev -- --host"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.ui.rule=PathPrefix(`/`)"
+      # The API's /internal routes are reached only inside the compose network.
+      - "traefik.http.routers.ui.rule=PathPrefix(`/`) && !PathPrefix(`/internal`)"
       - "traefik.http.routers.ui.entrypoints=web"
       - "traefik.http.routers.ui.priority=1"
       - "traefik.http.services.ui.loadbalancer.server.port=8888"
+
+volumes:
+  stats-pgdata:
