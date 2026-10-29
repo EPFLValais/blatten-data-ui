@@ -767,8 +767,9 @@ function initBboxFilterMap() {
     options: { position: 'topright' },
     onAdd() {
       const btn = L.DomUtil.create('button', 'bbox-map-zoom-extent-btn');
-      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 5.5L1 1m0 0h3m-3 0v3m7.5 1.5L13 1m0 0h-3m3 0v3M5.5 8.5L1 13m0 0h3m-3 0v-3m7.5-1.5L13 13m0 0h-3m3 0v-3"/></svg>';
+      btn.innerHTML = '<svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 5.5L1 1m0 0h3m-3 0v3m7.5 1.5L13 1m0 0h-3m3 0v3M5.5 8.5L1 13m0 0h3m-3 0v-3m7.5-1.5L13 13m0 0h-3m3 0v-3"/></svg>';
       btn.title = 'Zoom to extent';
+      btn.setAttribute('aria-label', btn.title);
       L.DomEvent.disableClickPropagation(btn);
       btn.addEventListener('click', () => {
         const extent = padBbox(computeOverlayExtent() || dataBboxExtent);
@@ -787,15 +788,17 @@ function initBboxFilterMap() {
     options: { position: 'bottomright' },
     onAdd() {
       const btn = L.DomUtil.create('button', 'bbox-map-expand-height-btn');
-      const chevDown = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l4 4 4-4"/></svg>';
-      const chevUp = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l4-4 4 4"/></svg>';
+      const chevDown = '<svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5l4 4 4-4"/></svg>';
+      const chevUp = '<svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l4-4 4 4"/></svg>';
       btn.innerHTML = chevDown;
       btn.title = 'Expand map';
+      btn.setAttribute('aria-label', btn.title);
       L.DomEvent.disableClickPropagation(btn);
       btn.addEventListener('click', () => {
         const tall = container.classList.toggle('bbox-map-tall');
         btn.innerHTML = tall ? chevUp : chevDown;
         btn.title = tall ? 'Collapse map' : 'Expand map';
+        btn.setAttribute('aria-label', btn.title);
         // Invalidate map size after CSS transition, then fit to extent on collapse
         setTimeout(() => {
           map.invalidateSize();
@@ -1699,12 +1702,16 @@ function initMiniMap(el) {
     attribution: '&copy; <a href="https://www.swisstopo.admin.ch/">swisstopo</a>'
   }).addTo(miniMap);
 
-  // Draw the geometry
+  // Draw the geometry: a dark magenta line over a white halo stays visible on the coloured
+  // basemap for every kind of colour vision, which red on green and brown does not.
+  const GEOMETRY_COLOR = '#b0006a';
+  const HALO = { color: '#ffffff', weight: 5, fill: false, interactive: false };
   let fitBounds;
   if (geometry && geometry.type === 'Polygon') {
     const coords = geometry.coordinates[0].map(c => [c[1], c[0]]);
+    L.polygon(coords, HALO).addTo(miniMap);
     const polygon = L.polygon(coords, {
-      color: '#ff0000',
+      color: GEOMETRY_COLOR,
       weight: 2,
       fillOpacity: 0.3
     }).addTo(miniMap);
@@ -1714,16 +1721,18 @@ function initMiniMap(el) {
     const [lon, lat] = geometry.coordinates;
     L.circleMarker([lat, lon], {
       radius: 6,
-      color: '#ff0000',
-      fillColor: '#ff0000',
-      fillOpacity: 0.5
+      color: '#ffffff',
+      weight: 2,
+      fillColor: GEOMETRY_COLOR,
+      fillOpacity: 0.9
     }).addTo(miniMap);
     miniMap.setView([lat, lon], 14);
   } else {
     // Just use bbox
     fitBounds = [[bbox[1], bbox[0]], [bbox[3], bbox[2]]];
+    L.rectangle(fitBounds, HALO).addTo(miniMap);
     L.rectangle(fitBounds, {
-      color: '#ff0000',
+      color: GEOMETRY_COLOR,
       weight: 2,
       fillOpacity: 0.2
     }).addTo(miniMap);

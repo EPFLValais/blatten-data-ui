@@ -131,7 +131,7 @@ a:hover {
 
 .breadcrumb span {
   margin: 0 0.5rem;
-  color: #999;
+  color: #767676;
 }
 
 /* Main content card */
@@ -303,7 +303,7 @@ a:hover {
 }
 
 .file-nav-sep {
-  color: #999;
+  color: #767676;
 }
 
 .file-nav-collection {
@@ -372,7 +372,7 @@ a:hover {
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: #999;
+  color: #767676;
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
@@ -703,7 +703,7 @@ a:hover {
 
 .bbox-map-hint {
   font-size: 0.65rem;
-  color: #999;
+  color: #767676;
   text-align: center;
 }
 
@@ -959,7 +959,7 @@ path.bbox-overlay-clickable {
 
 .file-meta-toggle {
   font-size: 0.6rem;
-  color: #ccc;
+  color: #767676;
   cursor: pointer;
   user-select: none;
   transition: color 0.2s;
@@ -992,7 +992,7 @@ path.bbox-overlay-clickable {
   display: flex;
   gap: 0;
   font-size: 0.75rem;
-  color: #999;
+  color: #767676;
   flex-shrink: 0;
   align-items: center;
 }
@@ -1444,7 +1444,7 @@ path.bbox-overlay-clickable {
 .asset-date {
   min-width: 5rem;
   text-align: right;
-  color: #999;
+  color: #767676;
 }
 
 .asset-geo {
@@ -1482,7 +1482,7 @@ path.bbox-overlay-clickable {
 
 .collection-nav-arrow {
   font-size: 0.8rem;
-  color: #ccc;
+  color: #767676;
   width: 0.8rem;
   flex-shrink: 0;
   text-align: center;
@@ -1853,7 +1853,7 @@ path.bbox-overlay-clickable {
   align-items: center;
   justify-content: flex-end;
   gap: 0.4rem;
-  transition: opacity 0.2s;
+  transition: opacity 0.2s, color 0.2s;
 }
 
 .site-footer a {
@@ -1866,8 +1866,10 @@ path.bbox-overlay-clickable {
   text-decoration: underline;
 }
 
-.site-footer:hover {
-  opacity: 0.7;
+.site-footer:hover,
+.site-footer:focus-within {
+  opacity: 1;
+  color: #555;
 }
 
 .footer-separator {
@@ -2005,7 +2007,7 @@ path.bbox-overlay-clickable {
   align-items: center;
   justify-content: flex-end;
   gap: 0.4rem;
-  transition: opacity 0.2s;
+  transition: opacity 0.2s, color 0.2s;
 }
 
 .site-footer a {
@@ -2018,12 +2020,18 @@ path.bbox-overlay-clickable {
   text-decoration: underline;
 }
 
-.site-footer:hover {
-  opacity: 0.7;
+.site-footer:hover,
+.site-footer:focus-within {
+  opacity: 1;
+  color: #555;
 }
 
 .footer-separator {
   margin: 0 0.2rem;
+}
+
+.footer-legal {
+  margin-right: auto;
 }
 
 /* Show more items button, and the next page of an item's files */
