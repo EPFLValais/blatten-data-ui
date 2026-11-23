@@ -115,3 +115,50 @@ test('no request in the website sets a limit over 1000', () => {
     for (const limit of limits) assert.ok(limit <= 1000, `${name} asks for limit ${limit}`);
   }
 });
+
+test('escapeHtml leaves no markup characters in text', () => {
+  const { escapeHtml } = load();
+  const escaped = escapeHtml('<img src=x onerror=alert(1)>');
+  assert.ok(!escaped.includes('<') && !escaped.includes('>'));
+  assert.equal(escapeHtml('a"b\'c&d'), 'a&quot;b&#39;c&amp;d');
+  assert.equal(escapeHtml(12), '12');
+});
+
+test('the breadcrumb title shows an unknown collection id as text', () => {
+  const { breadcrumbTitleHtml } = load();
+  const html = breadcrumbTitleHtml([], '<img src=x onerror=1>');
+  assert.ok(!html.includes('<img'));
+  assert.ok(html.includes('&lt;img src=x onerror=1&gt;'));
+});
+
+test('the breadcrumb title escapes a collection title from the catalog', () => {
+  const { breadcrumbTitleHtml } = load();
+  const html = breadcrumbTitleHtml([{ id: 'c1', title: '<b onclick=1>t</b>' }], 'c1');
+  assert.ok(!html.includes('<b '));
+});
+
+test('the breadcrumb title of a known collection links back and names the collection', () => {
+  const { breadcrumbTitleHtml } = load();
+  const html = breadcrumbTitleHtml([{ id: 'radar-2025', title: 'Radar & Camera' }], 'radar-2025');
+  assert.ok(html.includes('<a href="#" id="backToCollections">'));
+  assert.ok(html.includes('<span class="file-nav-collection">Radar &amp; Camera</span>'));
+});
+
+test('the breadcrumb title falls back to the id and shows All Collections when none is open', () => {
+  const { breadcrumbTitleHtml } = load();
+  assert.ok(breadcrumbTitleHtml([], 'radar-2025').includes('>radar-2025</span>'));
+  assert.equal(breadcrumbTitleHtml([], null), '<span>All Collections</span>');
+});
+
+test('request paths encode collection and item ids', () => {
+  const { collectionItemsPath } = load();
+  assert.equal(collectionItemsPath('radar-2025'), '/stac/collections/radar-2025/items');
+  assert.equal(collectionItemsPath('radar-2025', 'a.b_1'), '/stac/collections/radar-2025/items/a.b_1');
+  for (const id of ['../x', '..', '.', 'a/b', 'a?b#c']) {
+    const path = collectionItemsPath(id, id);
+    assert.ok(!path.includes('../') && !path.includes('/./') && !path.includes('/../'), path);
+    assert.equal(path.split('/').length, 6, path);
+  }
+  assert.equal(collectionItemsPath('../x'), '/stac/collections/..%2Fx/items');
+  assert.equal(collectionItemsPath('..'), '/stac/collections/%2E%2E/items');
+});

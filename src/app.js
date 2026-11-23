@@ -1,5 +1,4 @@
 // STAC API-based file browser
-const STAC_API = '/stac';
 let collections = [];
 let currentCollection = null;
 let items = [];
@@ -121,7 +120,7 @@ async function loadExpandedItemContent(metaEl, itemId) {
       renderAssetPages(assetsContainer, itemId);
     } catch (err) {
       assetsContainer._pager = null;
-      assetsContainer.innerHTML = `<div class="error-msg">Failed to load files: ${err.message}</div>`;
+      assetsContainer.innerHTML = `<div class="error-msg">Failed to load files: ${escapeHtml(err.message)}</div>`;
     }
   }
 
@@ -133,7 +132,7 @@ async function loadExpandedItemContent(metaEl, itemId) {
 
 // List a series' days a page at a time, within the current date filter
 async function loadDayList(daysContainer, itemId) {
-  const itemsPath = `${STAC_API}/collections/${currentCollection}/items`;
+  const itemsPath = collectionItemsPath(currentCollection);
   const url = daysUrl({ href: daysContainer.dataset.daysHref }, itemsPath, buildFilterParams());
   const pager = createDayPager(fetchJson, url, itemsPath);
   daysContainer._pager = pager;
@@ -143,7 +142,7 @@ async function loadDayList(daysContainer, itemId) {
     renderDayPages(daysContainer, itemId);
   } catch (err) {
     daysContainer._pager = null;
-    daysContainer.innerHTML = `<div class="error-msg">Failed to load days: ${err.message}</div>`;
+    daysContainer.innerHTML = `<div class="error-msg">Failed to load days: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -219,7 +218,7 @@ async function openDay(daysContainer, dayId) {
     await panel._pager.next();
     if (panel.isConnected) renderAssetPages(panel, dayId);
   } catch (err) {
-    panel.innerHTML = `<div class="error-msg">Failed to load files: ${err.message}</div>`;
+    panel.innerHTML = `<div class="error-msg">Failed to load files: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -424,10 +423,6 @@ function getCollectionIcon(collectionId) {
   return '';
 }
 
-function escapeAttr(value) {
-  return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
 // Focus, text and cursor of the search box, read from the live element
 function captureSearchState() {
   const input = document.getElementById('searchFilter');
@@ -466,11 +461,7 @@ function updateBreadcrumb() {
   const hasAdvancedFilters = currentFilters.dateFrom || currentFilters.dateTo || currentFilters.bbox;
   const hasAnyFilter = currentFilters.search || currentFilters.sensor || currentFilters.source || currentFilters.processingLevel || hasAdvancedFilters;
 
-  const titleHtml = !currentCollection
-    ? `<span>All Collections</span>`
-    : `<a href="#" id="backToCollections">&larr; All Collections</a>
-       <span class="file-nav-sep">/</span>
-       <span class="file-nav-collection">${(collections.find(c => c.id === currentCollection)?.title) || currentCollection}</span>`;
+  const titleHtml = breadcrumbTitleHtml(collections, currentCollection);
 
   // Current bbox display values
   const bboxDisplay = currentFilters.bbox || dataBboxExtent;
@@ -485,7 +476,7 @@ function updateBreadcrumb() {
         </div>
         <div class="filter-row">
           <div class="search-input-wrapper">
-            <input type="text" id="searchFilter" placeholder="Search..." value="${escapeAttr(currentFilters.search)}">
+            <input type="text" id="searchFilter" placeholder="Search..." value="${escapeHtml(currentFilters.search)}">
             <button class="search-clear-btn" id="searchClearBtn" style="display: ${currentFilters.search ? 'flex' : 'none'};" title="Clear search">&times;</button>
           </div>
           <select id="sensorFilter">
@@ -1433,7 +1424,7 @@ async function loadCollection(collectionId, pushHistory = true) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading items...</div>';
 
   const seq = ++loadSeq;
-  const itemsPath = `${STAC_API}/collections/${collectionId}/items`;
+  const itemsPath = collectionItemsPath(collectionId);
   try {
     // A text match on a day lists its series: the matches are read across all levels first,
     // then the series level is kept to the series they belong to.
@@ -1473,7 +1464,7 @@ async function fetchJson(url) {
 
 // Fetch item details with paginated assets
 async function fetchItemAssets(collectionId, itemId, limit = 20, offset = 0) {
-  const response = await fetch(`${STAC_API}/collections/${collectionId}/items/${itemId}?asset_limit=${limit}&asset_offset=${offset}`);
+  const response = await fetch(`${collectionItemsPath(collectionId, itemId)}?asset_limit=${limit}&asset_offset=${offset}`);
   if (!response.ok) throw new Error('Failed to load item details');
   return response.json();
 }
@@ -1574,7 +1565,7 @@ function renderItems() {
             ${days ? `
             <div class="meta-days">
               <div class="meta-days-title">Days</div>
-              <div class="meta-days-content" data-days-href="${escapeAttr(days.href)}">
+              <div class="meta-days-content" data-days-href="${escapeHtml(days.href)}">
                 <div class="assets-placeholder">Loading days...</div>
               </div>
             </div>
@@ -1758,7 +1749,7 @@ function initMiniMap(el) {
 
   // Build KML URL using path-based route (no query params — avoids URL encoding
   // issues in SwissTopo's hash fragment where &item_id gets split off as a hash param)
-  const kmlUrl = `${window.location.origin}${STAC_API}/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}/kml`;
+  const kmlUrl = `${window.location.origin}${collectionItemsPath(collectionId, itemId)}/kml`;
 
   // Build SwissTopo URL with new 2024 format:
   // - Hash-based URL: #/map?...

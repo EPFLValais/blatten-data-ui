@@ -3,6 +3,41 @@
 // its series in blatten:series; the lists show the series level only.
 
 const LIST_PAGE_SIZE = 200;
+const STAC_API = '/stac';
+
+// Text made safe to place in element content or in a quoted attribute value.
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// One path segment of a request, encoded. A segment of only dots is encoded too, so an id never
+// reads as `.` or `..`.
+function pathSegment(value) {
+  const encoded = encodeURIComponent(value);
+  return /^\.+$/.test(encoded) ? encoded.replace(/\./g, '%2E') : encoded;
+}
+
+// The STAC path of a collection's items, or of one of its items when itemId is given.
+function collectionItemsPath(collectionId, itemId) {
+  const items = `${STAC_API}/collections/${pathSegment(collectionId)}/items`;
+  return itemId === undefined ? items : `${items}/${pathSegment(itemId)}`;
+}
+
+// The breadcrumb title for the open collection: its catalog title, or its id when the catalog
+// does not list it. Both are text from outside the page and are escaped.
+function breadcrumbTitleHtml(collections, currentCollection) {
+  if (!currentCollection) return '<span>All Collections</span>';
+  const title = collections.find((c) => c.id === currentCollection)?.title || currentCollection;
+  return `<a href="#" id="backToCollections">&larr; All Collections</a>
+       <span class="file-nav-sep">/</span>
+       <span class="file-nav-collection">${escapeHtml(title)}</span>`;
+}
+
 const SERIES_LEVEL_FILTER = 'blatten:series IS NULL';
 
 // Restricts an item query to the series level: items that are not a day of a series.
