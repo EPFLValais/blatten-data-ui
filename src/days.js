@@ -1,7 +1,7 @@
 // The days of a series, listed a page at a time from the series' `rel: "items"` link.
 // A series keeps its archive, manifest and undated files; each day of its dated files is
 // a day item naming the series in blatten:series. Loaded after listing.js, which supplies
-// nextPageUrl, and before app.js, which supplies formatSize.
+// nextPageUrl and escapeHtml, and before app.js, which supplies formatSize.
 
 const DAY_PAGE_SIZE = 100;
 
@@ -77,11 +77,11 @@ function renderDayList(pager) {
     const count = props['blatten:file_count'];
     const size = props['blatten:total_size'];
     html += `
-      <div class="day-row" data-day-id="${day.id}">
+      <div class="day-row" data-day-id="${escapeHtml(day.id)}">
         <span class="file-meta-toggle"><span class="arrow">&#9654;</span></span>
-        <span class="day-date">${dayLabel(day)}</span>
+        <span class="day-date">${escapeHtml(dayLabel(day))}</span>
         <span class="asset-meta">
-          ${count != null ? `<span class="day-count">${count} files</span>` : ''}
+          ${count != null ? `<span class="day-count">${escapeHtml(count)} files</span>` : ''}
           ${size ? `<span class="asset-size">${formatSize(size)}</span>` : ''}
         </span>
       </div>

@@ -15,6 +15,18 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+// A link from the catalog, kept only when it is http or https (a relative link is read against
+// the page, which is https); any other scheme, such as javascript: or data:, becomes '#'.
+function safeHref(value) {
+  if (!value) return '#';
+  try {
+    const { protocol } = new URL(value, 'https://localhost');
+    return protocol === 'http:' || protocol === 'https:' ? String(value) : '#';
+  } catch {
+    return '#';
+  }
+}
+
 // One path segment of a request, encoded. A segment of only dots is encoded too, so an id never
 // reads as `.` or `..`.
 function pathSegment(value) {

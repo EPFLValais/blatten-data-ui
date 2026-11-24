@@ -1,5 +1,6 @@
 // An item's files, fetched a page at a time and rendered as file groups by extension.
-// Loaded before app.js, which supplies formatSize and formatDate.
+// Loaded after listing.js, which supplies escapeHtml and safeHref, and before app.js, which
+// supplies formatSize and formatDate.
 
 const ASSET_PAGE_SIZE = 500;
 
@@ -49,13 +50,13 @@ function getExtension(href, title) {
 function renderAssetRow(asset) {
   const title = asset.title || asset.key;
   const size = asset['file:size'];
-  const href = asset.href || '#';
+  const href = escapeHtml(safeHref(asset.href));
   // proj:bbox marks per-asset LV95 geometry
   const hasGeo = asset['proj:bbox'] != null;
   const dateStr = asset.datetime ? formatDate(asset.datetime) : '';
   return `
         <a class="file-item asset-row" href="${href}" target="_blank" rel="noopener">
-          <span class="file-name">${title}</span>
+          <span class="file-name">${escapeHtml(title)}</span>
           <span class="asset-meta">
             ${hasGeo ? '<span class="asset-geo" title="Has LV95 coordinates">LV95</span>' : ''}
             ${size ? `<span class="asset-size">${formatSize(size)}</span>` : ''}
@@ -102,7 +103,7 @@ function renderItemAssets(pager, info = {}) {
       <span class="files-count">${complete ? `${loaded} files` : `${loaded} of ${total} files`}</span>
       ${totalSize > 0 ? `<span class="files-size">${formatSize(totalSize)}${complete ? '' : ' loaded'}</span>` : ''}
       ${withGeo > 0 ? `<span class="files-geo" title="${withGeo} files with LV95 coordinates">${withGeo} with coordinates</span>` : ''}
-      ${archive ? `<a href="${archive.href}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${archive.size})</a>${archive.zip64 ? '<span class="archive-note" title="This archive uses ZIP64 extensions. The built-in Archive Utility on macOS may not extract it correctly — use The Unarchiver, 7-Zip, or the command-line unzip tool instead.">ZIP64</span>' : ''}` : ''}
+      ${archive ? `<a href="${escapeHtml(safeHref(archive.href))}" class="meta-download-btn" target="_blank" rel="noopener">Download Archive (${escapeHtml(archive.size)})</a>${archive.zip64 ? '<span class="archive-note" title="This archive uses ZIP64 extensions. The built-in Archive Utility on macOS may not extract it correctly — use The Unarchiver, 7-Zip, or the command-line unzip tool instead.">ZIP64</span>' : ''}` : ''}
     </div>
   `;
 
@@ -116,9 +117,9 @@ function renderItemAssets(pager, info = {}) {
 
     html += `
       <div class="file-group">
-        <div class="file-group-header" data-target="${groupId}" data-ext="${ext}">
+        <div class="file-group-header" data-target="${groupId}" data-ext="${escapeHtml(ext)}">
           <span class="file-group-toggle">▶</span>
-          <span class="file-group-ext">${ext}</span>
+          <span class="file-group-ext">${escapeHtml(ext)}</span>
           <span class="file-group-badge"${complete ? '' : ' title="More files may load"'}>${badge}</span>
           <span class="file-group-size">${formatSize(groupSize)}</span>
         </div>

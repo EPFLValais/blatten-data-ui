@@ -60,7 +60,7 @@ function replaceHistoryState(collectionId = null, expandedItem = null, openDay =
 
 // Collapse an item by ID (used by popstate handler)
 function collapseItem(itemId) {
-  const row = document.querySelector(`.file-item.file[data-item-id="${itemId}"]`);
+  const row = document.querySelector(`.file-item.file[data-item-id="${CSS.escape(itemId)}"]`);
   if (row) {
     const targetId = row.dataset.metaTarget;
     const toggle = row.querySelector('.file-meta-toggle');
@@ -78,7 +78,7 @@ function collapseItem(itemId) {
 
 // Expand an item by ID, and open one of its days (used by popstate handler and initial load)
 async function expandItemById(itemId, dayId = null) {
-  const row = document.querySelector(`.file-item.file[data-item-id="${itemId}"]`);
+  const row = document.querySelector(`.file-item.file[data-item-id="${CSS.escape(itemId)}"]`);
   if (!row) return;
   const targetId = row.dataset.metaTarget;
   const toggle = row.querySelector('.file-meta-toggle');
@@ -187,7 +187,7 @@ function renderDayPages(daysContainer, itemId) {
 
 // Put a day's file panel under its row, or above the rows when the row is not loaded
 function placeDayPanel(daysContainer, panel) {
-  const row = daysContainer.querySelector(`.day-row[data-day-id="${panel.dataset.dayId}"]`);
+  const row = daysContainer.querySelector(`.day-row[data-day-id="${CSS.escape(panel.dataset.dayId)}"]`);
   daysContainer.querySelectorAll('.day-row.expanded').forEach(r => r.classList.remove('expanded'));
   if (row) {
     row.classList.add('expanded');
@@ -308,7 +308,7 @@ window.addEventListener('popstate', (event) => {
       expandItemById(expandedItem, openDayId);
     } else if (expandedItem) {
       // Same series - open or close a day
-      const row = document.querySelector(`.file-item.file[data-item-id="${expandedItem}"]`);
+      const row = document.querySelector(`.file-item.file[data-item-id="${CSS.escape(expandedItem)}"]`);
       syncOpenDay(row && document.getElementById(row.dataset.metaTarget), openDayId);
     }
     return;
@@ -445,17 +445,9 @@ function updateBreadcrumb() {
   const searchState = captureSearchState();
 
   // Build dropdown options
-  const sensorOptions = allSensors.map(s =>
-    `<option value="${s}" ${currentFilters.sensor === s ? 'selected' : ''}>${s}</option>`
-  ).join('');
-
-  const sourceOptions = allSources.map(s =>
-    `<option value="${s}" ${currentFilters.source === s ? 'selected' : ''}>${s}</option>`
-  ).join('');
-
-  const processingLevelOptions = allProcessingLevels.map(level =>
-    `<option value="${level}" ${currentFilters.processingLevel === level ? 'selected' : ''}>Level ${level}</option>`
-  ).join('');
+  const sensorOptions = filterOptionsHtml(allSensors, currentFilters.sensor);
+  const sourceOptions = filterOptionsHtml(allSources, currentFilters.source);
+  const processingLevelOptions = filterOptionsHtml(allProcessingLevels, currentFilters.processingLevel, (level) => `Level ${level}`);
 
   // Check if any advanced filters (date/bbox) are active
   const hasAdvancedFilters = currentFilters.dateFrom || currentFilters.dateTo || currentFilters.bbox;
@@ -1167,7 +1159,7 @@ function addBboxOverlays(map) {
     if (w == null || s == null || e == null || n == null) return;
     const targetLayer = bboxOverlayGroup || map;
     const rect = L.rectangle([[s, w], [n, e]], overlayStyle)
-      .bindTooltip(label, { sticky: true, direction: 'top', opacity: 0.85 })
+      .bindTooltip(document.createTextNode(label), { sticky: true, direction: 'top', opacity: 0.85 })
       .addTo(targetLayer);
     bboxOverlayLayers[id] = rect;
     rect._overlayId = id;
@@ -1184,7 +1176,7 @@ function addBboxOverlays(map) {
       if (!currentCollection) {
         loadCollection(id);
       } else {
-        const row = document.querySelector(`.file-item.file[data-item-id="${id}"] .file-row`);
+        const row = document.querySelector(`.file-item.file[data-item-id="${CSS.escape(id)}"] .file-row`);
         if (row) row.click();
       }
     });
@@ -1207,8 +1199,8 @@ function addBboxOverlays(map) {
 
 function highlightRow(id, highlight) {
   const selector = currentCollection
-    ? `.file-item[data-item-id="${id}"]`
-    : `.collection-item[data-collection="${id}"]`;
+    ? `.file-item[data-item-id="${CSS.escape(id)}"]`
+    : `.collection-item[data-collection="${CSS.escape(id)}"]`;
   const row = document.querySelector(selector);
   if (row) {
     row.classList.toggle('map-highlight', highlight);
@@ -1372,33 +1364,7 @@ function renderCollections() {
     return;
   }
 
-  container.innerHTML = filteredCollections.map(collection => {
-    const itemCount = collection._itemCount || 0;
-    const searchMatchCount = collection._searchMatchCount || 0;
-    const temporal = collection.extent?.temporal?.interval?.[0];
-    const dateParts = temporal ? formatDateParts(temporal[0], temporal[1]) : { start: '-', sep: '', end: '' };
-    const badgeText = searchMatchCount > 0
-      ? `${searchMatchCount} match${searchMatchCount !== 1 ? 'es' : ''}`
-      : (itemCount > 0 ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : '');
-
-    return `
-      <div class="file-item folder collection-item" data-collection="${collection.id}">
-        <div class="file-row">
-          <span class="collection-nav-arrow">&#x203A;</span>
-          <div class="file-name">
-            <span class="name">${collection.title || collection.id}</span>
-          </div>
-          ${badgeText ? `<span class="file-count-badge">${badgeText}</span>` : '<span class="file-count-badge"></span>'}
-          <div class="file-info">
-            <span class="info-size"></span>
-            <span class="info-date-start">${dateParts.start}</span>
-            <span class="info-date-sep">${dateParts.sep}</span>
-            <span class="info-date-end">${dateParts.end}</span>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
+  container.innerHTML = filteredCollections.map(collectionRowHtml).join('');
 
   // Add click and hover handlers
   container.querySelectorAll('.collection-item').forEach(el => {
@@ -1481,100 +1447,7 @@ function renderItems() {
     return;
   }
 
-  container.innerHTML = filteredItems.map(item => {
-    const props = item.properties || {};
-    const format = props['blatten:format'] || '';
-
-    // Get assets info
-    const assets = item.assets || {};
-    const assetCount = Object.keys(assets).length;
-    const archiveAsset = assets.archive;
-    const fileAssets = Object.entries(assets).filter(([key]) => key !== 'archive');
-    const totalSize = props['blatten:total_size'] || fileAssets.reduce((sum, [, a]) => sum + (a['file:size'] || 0), 0);
-
-    // Date range
-    const startDate = props.start_datetime || props.datetime;
-    const endDate = props.end_datetime;
-    const dateParts = formatDateParts(startDate, endDate);
-
-    // Metadata
-    const source = props['blatten:source'] || '';
-    const processingLevel = props['blatten:processing_level'];
-    const frequency = props['blatten:frequency'] || '';
-    const description = props.description || '';
-    const additionalInfo = props['blatten:additional_info'] || '';
-    const phase = props['blatten:phase'] || '';
-    const fileCount = props['blatten:file_count'] || fileAssets.length;
-
-    const metaId = 'meta-' + item.id.replace(/[^a-zA-Z0-9]/g, '-');
-
-    // Archive download link
-    const archiveHref = archiveAsset?.href || '#';
-
-    // A series lists its days beside its own files
-    const days = daysLink(item);
-
-    return `
-      <div class="file-item file" data-meta-target="${metaId}" data-item-id="${item.id}">
-        <div class="file-row">
-          <span class="file-meta-toggle" data-target="${metaId}">
-            <span class="arrow">&#9654;</span>
-          </span>
-          <div class="file-name">
-            <span class="name">${props.title || item.id}</span>
-          </div>
-          <span class="file-count-badge">${fileCount} files</span>
-          <div class="file-info">
-            <span class="info-size">${formatSize(totalSize)}</span>
-            <span class="info-date-start">${dateParts.start}</span>
-            <span class="info-date-sep">${dateParts.sep}</span>
-            <span class="info-date-end">${dateParts.end}</span>
-          </div>
-        </div>
-        <div class="file-meta" id="${metaId}">
-          <div class="meta-content-wrapper">
-            <div class="meta-grid">
-              ${description ? `<div class="meta-row"><span class="meta-label">Description</span><span class="meta-value">${description}</span></div>` : ''}
-              ${source ? `<div class="meta-row"><span class="meta-label">Source</span><span class="meta-value">${source}</span></div>` : ''}
-              ${processingLevel ? `<div class="meta-row"><span class="meta-label">Processing Level</span><span class="meta-value">${processingLevel}</span></div>` : ''}
-              ${phase ? `<div class="meta-row"><span class="meta-label">Phase</span><span class="meta-value">${phase}</span></div>` : ''}
-              ${frequency ? `<div class="meta-row"><span class="meta-label">Frequency</span><span class="meta-value">${frequency}</span></div>` : ''}
-              ${additionalInfo ? `<div class="meta-row"><span class="meta-label">Additional Info</span><span class="meta-value">${additionalInfo}</span></div>` : ''}
-              ${format ? `<div class="meta-row"><span class="meta-label">Format</span><span class="meta-value">${format}</span></div>` : ''}
-              ${item.bbox ? `<div class="meta-row"><span class="meta-label">BBox</span><span class="meta-value bbox">${
-                item.bbox.length === 6
-                  ? `[${item.bbox[0]?.toFixed(4)}, ${item.bbox[1]?.toFixed(4)}, ${item.bbox[3]?.toFixed(4)}, ${item.bbox[4]?.toFixed(4)}]`
-                  : `[${item.bbox[0]?.toFixed(4)}, ${item.bbox[1]?.toFixed(4)}, ${item.bbox[2]?.toFixed(4)}, ${item.bbox[3]?.toFixed(4)}]`
-              }</span></div>` : ''}
-              ${item.bbox?.length === 6 ? `<div class="meta-row"><span class="meta-label">Elevation</span><span class="meta-value elevation">${
-                item.bbox[2] === item.bbox[5]
-                  ? `${Math.round(item.bbox[2])} m`
-                  : `${Math.round(item.bbox[2])}\u2013${Math.round(item.bbox[5])} m`
-              }</span></div>` : ''}
-            </div>
-            ${item.bbox ? `
-            <div class="meta-map-section">
-              <div class="meta-mini-map" id="minimap-${metaId}" data-bbox="${item.bbox.join(',')}" data-geometry='${JSON.stringify(item.geometry)}' data-item-id="${item.id}" data-collection-id="${currentCollection}"></div>
-            </div>
-            ` : ''}
-          </div>
-          <div class="meta-assets">
-            <div class="meta-assets-content" data-file-count="${props['blatten:file_count'] || ''}" data-archive-href="${archiveAsset ? archiveHref : ''}" data-archive-size="${archiveAsset ? formatSize(archiveAsset['file:size']) : ''}" data-archive-zip64="${archiveAsset?.['blatten:zip64'] ? '1' : ''}">
-              <div class="assets-placeholder">Loading files...</div>
-            </div>
-            ${days ? `
-            <div class="meta-days">
-              <div class="meta-days-title">Days</div>
-              <div class="meta-days-content" data-days-href="${escapeHtml(days.href)}">
-                <div class="assets-placeholder">Loading days...</div>
-              </div>
-            </div>
-            ` : ''}
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
+  container.innerHTML = filteredItems.map(item => itemRowHtml(item, currentCollection)).join('');
 
   // Header row click to expand/collapse (only the top bar, not the expanded content)
   container.querySelectorAll('.file-item.file .file-row').forEach(rowHeader => {

@@ -10,10 +10,11 @@ const src = (name) => fs.readFileSync(path.join(__dirname, '../src', name), 'utf
 
 function load() {
   const ctx = {
+    URL,
     formatSize: (bytes) => (bytes ? `${bytes} B` : '-'),
     formatDate: (d) => d || '-',
   };
-  vm.runInNewContext(src('assets.js'), ctx);
+  for (const name of ['listing.js', 'assets.js']) vm.runInNewContext(src(name), ctx);
   return ctx;
 }
 
@@ -112,5 +113,5 @@ test('the page asks for an item\'s files only through the pager, never in one la
   const app = src('app.js');
   assert.doesNotMatch(app, /fetchItemAssets\([^)]*\b\d{4,}\b/);
   assert.match(app, /createAssetPager\(/);
-  assert.match(src('index.html'), /<script src="assets\.js"><\/script>\s*<script src="app\.js"><\/script>/);
+  assert.match(src('index.html'), /<script src="assets\.js"><\/script>\s*<script src="rows\.js"><\/script>\s*<script src="app\.js"><\/script>/);
 });
